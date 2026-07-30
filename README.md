@@ -342,3 +342,24 @@ datacenter ranges, which these retailers block for the same reason they block
 your VPS. To change the outcome you need a *residential* egress: run at home, or
 set `PROXY_URL` to a residential proxy.
 
+## Disabling a retailer
+
+Croma is disabled by default. It refuses plain HTTP from every IP tested (403)
+and returns an identical 351-byte `Access Denied` page to headless Chromium — from
+a datacenter *and* a residential IP, with stealth flags, automation-control
+disabled, a real viewport and a spoofed `navigator.webdriver`. Identical byte
+counts across all variants means Akamai rejects it at the TLS/HTTP edge before
+any JavaScript runs, so browser fingerprinting workarounds cannot help. Left
+enabled it costs four renders and four breakage alerts every pass.
+
+```json
+{
+  "disabled": ["croma"],
+  "retailers": { "croma": ["https://www.croma.com/..."] }
+}
+```
+
+URLs are kept, just not checked — remove the name from `disabled` to turn it back
+on. `--check croma` will not override this, so something switched off deliberately
+cannot be re-enabled by accident.
+

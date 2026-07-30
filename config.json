@@ -4,11 +4,29 @@
     "croma": "141001"
   },
   "retailers": {
-    "amazon": ["https://amzn.in/d/06nZ16cx"],
-    "flipkart": ["https://dl.flipkart.com/s/6PceRuNNNN","https://dl.flipkart.com/s/6PXZh8NNNN","https://dl.flipkart.com/s/6PXN0nNNNN"],
-    "sonycenter": ["https://shopatsc.com/collections/playstation-5-console/products/ps5-standard-e-chassis-arv"],
-    "croma": ["https://www.croma.com/sony-playstation-5-slim-1tb-ssd-gaming-console-white-/p/305985","https://www.croma.com/sony-playstation-5-1tb-ssd-digital-slim-gaming-console-with-cod-white-/p/316950","https://www.croma.com/sony-playstation-5-1tb-ssd-digital-edition-slim-gaming-console-white-/p/316841","https://www.croma.com/sony-playstation-5-1tb-ssd-standard-disc-gaming-console-white-/p/321320"],
+    "amazon": [
+      "https://amzn.in/d/06nZ16cx"
+    ],
+    "flipkart": [
+      "https://dl.flipkart.com/s/6PceRuNNNN",
+      "https://dl.flipkart.com/s/6PXZh8NNNN",
+      "https://dl.flipkart.com/s/6PXN0nNNNN"
+    ],
+    "sonycenter": [
+      "https://shopatsc.com/collections/playstation-5-console/products/ps5-standard-e-chassis-arv"
+    ],
+    "croma": [
+      "https://www.croma.com/sony-playstation-5-slim-1tb-ssd-gaming-console-white-/p/305985",
+      "https://www.croma.com/sony-playstation-5-1tb-ssd-digital-slim-gaming-console-with-cod-white-/p/316950",
+      "https://www.croma.com/sony-playstation-5-1tb-ssd-digital-edition-slim-gaming-console-white-/p/316841",
+      "https://www.croma.com/sony-playstation-5-1tb-ssd-standard-disc-gaming-console-white-/p/321320"
+    ],
     "reliancedigital": [],
-    "vijaysales": ["https://www.vijaysales.com/p/259648/sony-playstationr5-sa-e-disc-edition-gaming-console-ps5r-slim"]
-  }
+    "vijaysales": [
+      "https://www.vijaysales.com/p/259648/sony-playstationr5-sa-e-disc-edition-gaming-console-ps5r-slim"
+    ]
+  },
+  "disabled": [
+    "croma"
+  ]
 }

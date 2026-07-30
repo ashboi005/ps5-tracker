@@ -97,6 +97,29 @@ check(
 with_config({"pincode": "143001", "pincode_overrides": {"blinkit": "1"}, "retailers": {}})
 expect_exit("unknown retailer in overrides", main.load_config)
 
+print("disabled retailers:")
+with_config({
+    "pincode": "143001",
+    "disabled": ["croma"],
+    "retailers": {"croma": ["https://c1", "https://c2"], "vijaysales": ["https://v"]},
+})
+cfg_dis = main.load_config()
+check("disabled parsed", cfg_dis["disabled"], {"croma"})
+h, b = main.targets(cfg_dis, None)
+check("disabled retailer not checked", [r for r, _ in h + b], ["vijaysales"])
+check("its URLs are kept in config", len(cfg_dis["retailers"]["croma"]), 2)
+h, b = main.targets(cfg_dis, "croma")
+check("--check cannot re-enable a disabled retailer", h + b, [])
+
+with_config({"pincode": "1", "disabled": "croma", "retailers": {}})
+check("bare string accepted", main.load_config()["disabled"], {"croma"})
+
+with_config({"pincode": "1", "disabled": ["blinkit"], "retailers": {}})
+expect_exit("unknown retailer in disabled", main.load_config)
+
+with_config({"pincode": "1", "retailers": {}})
+check("no disabled key is fine", main.load_config()["disabled"], set())
+
 print("target splitting:")
 # Derived from the registry rather than hardcoded, so moving a retailer between
 # the httpx and browser paths does not invalidate these assertions.

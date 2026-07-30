@@ -62,6 +62,15 @@ def load_config() -> dict:
     if unknown:
         raise SystemExit(f"unknown retailer(s) in config: {', '.join(sorted(unknown))}")
 
+    disabled = config.get("disabled") or []
+    if isinstance(disabled, str):
+        disabled = [disabled]
+    unknown_disabled = set(disabled) - set(ALL_CHECKERS)
+    if unknown_disabled:
+        raise SystemExit(
+            f"unknown retailer(s) in disabled: {', '.join(sorted(unknown_disabled))}"
+        )
+
     overrides = config.get("pincode_overrides") or {}
     unknown_overrides = set(overrides) - set(ALL_CHECKERS)
     if unknown_overrides:
@@ -79,6 +88,7 @@ def load_config() -> dict:
         "pincode": pincode,
         "retailers": retailers,
         "pincode_overrides": overrides,
+        "disabled": set(disabled),
     }
 
 
@@ -90,8 +100,14 @@ def pincode_for(config: dict, retailer: str) -> str:
 def targets(config: dict, only: str | None) -> tuple[list, list]:
     """Split configured (retailer, url) pairs into http-based and browser-based."""
     http_targets, browser_targets = [], []
+    disabled = config.get("disabled") or set()
     for retailer, urls in config["retailers"].items():
         if only and retailer != only:
+            continue
+        # Disabled retailers keep their URLs in config but are not checked.
+        # Skipped even when named by --check, so the flag cannot silently
+        # re-enable something switched off deliberately.
+        if retailer in disabled:
             continue
         for url in urls:
             if not isinstance(url, str) or not url.strip():
