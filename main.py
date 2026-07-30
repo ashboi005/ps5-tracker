@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 import notifiers
 import state as state_module
 from checkers import ALL_CHECKERS, BROWSER_CHECKERS, HTTP_CHECKERS
+from checkers import http as http_module
 from checkers.common import CheckResult
 
 ROOT = Path(__file__).parent
@@ -106,7 +107,9 @@ async def run_checks(config: dict, only: str | None) -> list:
     results = []
 
     if http_targets:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            follow_redirects=True, proxy=http_module.PROXY_URL
+        ) as client:
             results.extend(
                 await asyncio.gather(
                     *(

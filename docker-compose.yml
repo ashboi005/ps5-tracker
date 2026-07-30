@@ -17,6 +17,10 @@ services:
       EMAIL_TO: ${EMAIL_TO}
       # Proof-of-life summary when nothing has been worth alerting on (12h).
       HEARTBEAT_SECONDS: 43200
+      # Optional residential proxy. Without one, Flipkart / Sony Center /
+      # Croma block this server's IP outright — see README "IP blocking".
+      # Format: http://user:pass@host:port
+      PROXY_URL: ${PROXY_URL:-}
     volumes:
       # Keeps state.json across redeploys, so you are not re-alerted on restart.
       - ps5-data:/data

@@ -25,6 +25,12 @@ TIMEOUT = float(os.getenv("HTTP_TIMEOUT_SECONDS") or 25.0)
 RETRY_STATUS = {429, 500, 502, 503, 504}
 MAX_ATTEMPTS = int(os.getenv("HTTP_MAX_ATTEMPTS") or 3)
 
+# Several retailers block datacenter IPs outright — verified: Flipkart and Sony
+# Center serve a home IP fine and refuse a VPS. No header or browser tweak fixes
+# that, so the only code-level remedy is egressing through a different IP.
+# Format: http://user:pass@host:port
+PROXY_URL = os.getenv("PROXY_URL") or None
+
 # A full browser-like header set. Verified necessary: with a bare User-Agent,
 # Flipkart returns 403; with these it returns 200.
 HEADERS = {
@@ -101,7 +107,9 @@ async def request(
             if client is not None:
                 response = await client.get(url, headers=HEADERS, timeout=TIMEOUT)
             else:
-                async with httpx.AsyncClient(follow_redirects=True) as owned:
+                async with httpx.AsyncClient(
+                    follow_redirects=True, proxy=PROXY_URL
+                ) as owned:
                     response = await owned.get(url, headers=HEADERS, timeout=TIMEOUT)
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             last_exc = exc
@@ -232,6 +240,41 @@ def parse_stock(html: str, delivery_signals: bool = True) -> bool | None:
     if availability is not None:
         return availability
     return parse_stock_from_text(html)
+
+
+# Bot-protection interstitials. Verified from a Coolify VPS: Croma serves a
+# 351-byte "Access Denied" page and Sony Center a 169-byte stub, where a home IP
+# gets the real product page. Detected explicitly so the error says "blocked"
+# rather than the misleading "could not determine stock".
+BLOCK_TITLE_SIGNALS = (
+    "access denied",
+    "attention required",
+    "just a moment",
+    "are you a robot",
+    "pardon our interruption",
+    "request blocked",
+    "forbidden",
+    "too many requests",
+    "service unavailable",
+)
+
+# A real product page is never this small. Sony Center's block stub was 169 bytes.
+MIN_PRODUCT_HTML = 2_000
+
+
+def detect_block(html: str) -> str | None:
+    """Identify a bot-protection page. Returns a reason, or None if it looks real."""
+    title = (parse_name(html) or "").lower()
+    for signal in BLOCK_TITLE_SIGNALS:
+        if signal in title:
+            return f"blocked by site bot protection (page title: {title!r})"
+
+    if len(html) < MIN_PRODUCT_HTML:
+        return (
+            f"blocked or empty response ({len(html)} bytes, no product markup) — "
+            "usually this IP is refused; a real product page is far larger"
+        )
+    return None
 
 
 def signal_report(html: str, limit: int = 3) -> str:

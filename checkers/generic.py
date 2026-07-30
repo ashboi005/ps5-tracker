@@ -10,6 +10,7 @@ import httpx
 
 from checkers.common import CheckResult, truncate
 from checkers.http import (
+    detect_block,
     fetch,
     parse_name,
     parse_price,
@@ -34,6 +35,12 @@ async def page_check(
         return CheckResult(retailer=retailer, url=url, error="timeout")
     except httpx.HTTPError as exc:
         return CheckResult(retailer=retailer, url=url, error=f"request failed: {exc}")
+
+    blocked = detect_block(html)
+    if blocked:
+        return CheckResult(
+            retailer=retailer, url=url, error=blocked, debug=signal_report(html)
+        )
 
     in_stock = parse_stock(html)
     if in_stock is None:

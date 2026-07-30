@@ -233,3 +233,34 @@ a scoped selector for that retailer, not another global signal.
 | `403` | Permanent bot block | Not retried; that retailer needs the browser path. |
 | `resolved to www.amazon.com` | `a.co` short links point at the US store | Use `amazon.in` or `amzn.in` links. |
 
+## IP blocking — the real limitation
+
+Three of six retailers **block datacenter IPs outright**. Measured the same
+minute, same URLs, from a home connection versus a Coolify VPS:
+
+| Site | Home IP | VPS |
+|---|---|---|
+| Flipkart | 200, 1.7 MB | connection dropped (httpx *and* Chromium both time out) |
+| Sony Center | 200 | 169-byte stub, no title |
+| Croma | 403 | `Access Denied` (351 bytes) — blocked in the browser too |
+
+This is IP/ASN reputation, not scraping technique. Header tuning, retries and
+headless Chromium were all tried and all fail: Croma's browser render returns
+the same `Access Denied` page. Those checks are reported as
+`blocked by site bot protection`, distinct from "no stock", so a block can never
+be mistaken for a sell-out.
+
+**Options, best first:**
+
+1. **Run it on a home machine** (old laptop, Raspberry Pi, home server). A
+   residential IP is what these sites accept, and everything already works
+   there. Free, and best for a personal tracker.
+2. **Set `PROXY_URL`** to a residential/mobile proxy, ideally India-based. Both
+   httpx and Chromium honour it. Costs money per GB, and product pages are large.
+3. **Accept partial coverage** on the VPS. Amazon and Vijay Sales work fine from
+   a datacenter IP; empty out the blocked retailers in `config.json` to stop
+   wasting ~450s per pass on requests that cannot succeed.
+
+Option 3 is worth doing regardless while you decide, since a blocked retailer
+still costs a full browser render and timeout on every pass.
+

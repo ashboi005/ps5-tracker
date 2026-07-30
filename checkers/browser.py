@@ -14,7 +14,14 @@ from __future__ import annotations
 import contextlib
 
 from checkers.common import CheckResult, truncate
-from checkers.http import parse_name, parse_price, parse_stock, signal_report
+from checkers.http import (
+    PROXY_URL,
+    detect_block,
+    parse_name,
+    parse_price,
+    parse_stock,
+    signal_report,
+)
 
 TIMEOUT_MS = 30_000
 
@@ -88,7 +95,10 @@ async def session():
         ) from exc
 
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(args=["--no-sandbox"])
+        launch_kwargs = {"args": ["--no-sandbox"]}
+        if PROXY_URL:
+            launch_kwargs["proxy"] = {"server": PROXY_URL}
+        browser = await playwright.chromium.launch(**launch_kwargs)
         try:
             yield Session(browser)
         finally:
@@ -126,6 +136,12 @@ async def rendered_check(
     except Exception as exc:  # noqa: BLE001 - any browser failure is a failed check
         return CheckResult(
             retailer=retailer, url=url, error=f"{type(exc).__name__}: {exc}"
+        )
+
+    blocked = detect_block(html)
+    if blocked:
+        return CheckResult(
+            retailer=retailer, url=url, error=blocked, debug=signal_report(html)
         )
 
     in_stock = parse_stock(html, delivery_signals=delivery_signals)

@@ -190,6 +190,41 @@ check("product_entries excludes _meta", list(state_module.product_entries(st6)),
 check("_meta survives save/load", "_meta" in st6, True)
 
 
+print("block detection (verified against real VPS responses):")
+from checkers.http import detect_block
+
+# Verbatim shape of what the VPS received: 351 bytes titled 'Access Denied'.
+croma_block = (
+    "<HTML><HEAD><TITLE>Access Denied</TITLE></HEAD><BODY><H1>Access Denied</H1>"
+    + "x" * 280
+    + "</BODY></HTML>"
+)
+check("croma 'Access Denied' -> blocked", "bot protection" in (detect_block(croma_block) or ""), True)
+# Sony Center returned a 169-byte stub with no title at all.
+check("169-byte stub -> blocked", "169 bytes" in (detect_block("x" * 169) or ""), True)
+check(
+    "cloudflare interstitial -> blocked",
+    "bot protection" in (detect_block("<title>Just a moment...</title>" + "x" * 5000) or ""),
+    True,
+)
+check(
+    "429 page -> blocked",
+    "bot protection" in (detect_block("<title>Too Many Requests</title>" + "x" * 5000) or ""),
+    True,
+)
+
+# False positives here would hide real stock, so both must come back clean.
+check(
+    "real product page -> not blocked",
+    detect_block("<title>SONY PS5 Console</title>" + "<div>product</div>" * 500),
+    None,
+)
+check(
+    "large real page -> not blocked",
+    detect_block("<title>PS5 Slim</title>" + "y" * 300_000),
+    None,
+)
+
 print("retry policy:")
 from checkers.http import MAX_ATTEMPTS, RETRY_STATUS, TIMEOUT, retry_delay
 
