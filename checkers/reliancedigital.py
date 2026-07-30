@@ -1,5 +1,7 @@
 """reliancedigital checker."""
 
+from __future__ import annotations
+
 import httpx
 
 from checkers.common import CheckResult

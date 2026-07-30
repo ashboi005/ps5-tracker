@@ -5,6 +5,8 @@ site that gets a real browser. Only one Chromium instance exists at a time and
 it is closed as soon as the check finishes.
 """
 
+from __future__ import annotations
+
 from checkers.common import CheckResult, truncate
 
 RETAILER = "amazon"
@@ -47,6 +49,17 @@ async def check(url: str, pincode: str, client=None) -> CheckResult:
                 lowered = availability.lower()
                 unavailable = any(s in lowered for s in OUT_OF_STOCK_SIGNALS)
                 in_stock = has_buy_button and not unavailable
+
+                # Amazon.in URLs are required; amazon.com reflects US stock and
+                # would silently track the wrong store.
+                host = (await page.evaluate("location.hostname")) or ""
+                if not host.endswith("amazon.in"):
+                    return CheckResult(
+                        retailer=RETAILER,
+                        url=url,
+                        name=truncate(name),
+                        error=f"resolved to {host}, not amazon.in — use an amazon.in URL",
+                    )
 
                 return CheckResult(
                     retailer=RETAILER,

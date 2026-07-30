@@ -4,6 +4,8 @@ Each retailer module wraps this, and can pass site-specific overrides or replace
 `check` entirely once its pincode-serviceability endpoint has been verified.
 """
 
+from __future__ import annotations
+
 import httpx
 
 from checkers.common import CheckResult, truncate
@@ -27,10 +29,21 @@ async def page_check(
     except httpx.HTTPError as exc:
         return CheckResult(retailer=retailer, url=url, error=f"request failed: {exc}")
 
+    in_stock = parse_stock(html)
+    if in_stock is None:
+        # No authoritative signal and ambiguous text. Reporting "no stock" here
+        # would be a silent false negative, so surface it as a failed check.
+        return CheckResult(
+            retailer=retailer,
+            url=url,
+            name=truncate(parse_name(html)),
+            error="could not determine stock (no schema.org markup, ambiguous text)",
+        )
+
     return CheckResult(
         retailer=retailer,
         url=url,
-        in_stock=parse_stock(html),
+        in_stock=in_stock,
         price=parse_price(html),
         name=truncate(parse_name(html)),
     )

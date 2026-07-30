@@ -19,7 +19,13 @@ sys.modules.setdefault("httpx", stub)
 
 import state as state_module
 from checkers.common import CheckResult, truncate
-from checkers.http import parse_name, parse_price, parse_stock
+from checkers.http import (
+    parse_delivery_blocked,
+    parse_jsonld_availability,
+    parse_name,
+    parse_price,
+    parse_stock,
+)
 
 failures = []
 
@@ -32,16 +38,83 @@ def check(label, got, want):
         failures.append(label)
 
 
-print("parse_stock:")
+print("parse_stock (text fallback):")
 check("add to cart -> in stock", parse_stock("<div>Add to Cart</div>"), True)
 check("sold out -> no stock", parse_stock("<div>Sold Out</div>"), False)
 check(
-    "out-of-stock beats add-to-cart",
+    "conflicting text -> unknown, not a false 'sold out'",
     parse_stock("<div>Add to Cart</div><span>Currently unavailable</span>"),
+    None,
+)
+check("no signal -> unknown", parse_stock("<div>hello</div>"), None)
+check("ignores script text", parse_stock("<script>add to cart</script><p>hi</p>"), None)
+
+print("parse_stock (schema.org, authoritative):")
+check(
+    "JSON-LD InStock wins over conflicting text",
+    parse_stock(
+        '<span>Notify Me</span><script>{"availability":"https://schema.org/InStock"}</script>'
+    ),
+    True,
+)
+check(
+    "JSON-LD OutOfStock wins over add-to-cart",
+    parse_stock(
+        '<div>Add to Cart</div><script>{"availability":"https://schema.org/OutOfStock"}</script>'
+    ),
     False,
 )
-check("no signal -> no stock", parse_stock("<div>hello</div>"), False)
-check("ignores script text", parse_stock("<script>add to cart</script><p>hi</p>"), False)
+check(
+    "handles Flipkart's escaped slashes",
+    parse_jsonld_availability('{"availability":"https:\\u002f\\u002fschema.org\\u002fInStock"}'),
+    True,
+)
+check(
+    "any in-stock offer means buyable",
+    parse_jsonld_availability(
+        '{"availability":"https://schema.org/OutOfStock"},'
+        '{"availability":"https://schema.org/InStock"}'
+    ),
+    True,
+)
+check("no markup -> None", parse_jsonld_availability("<div>hi</div>"), None)
+check(
+    "LimitedAvailability -> in stock",
+    parse_jsonld_availability('{"availability":"https://schema.org/LimitedAvailability"}'),
+    True,
+)
+check(
+    "PreOrder -> not in stock",
+    parse_jsonld_availability('{"availability":"https://schema.org/PreOrder"}'),
+    False,
+)
+
+print("pincode delivery gate (beats national InStock):")
+# The real case: Flipkart's JSON-LD says InStock (the seller holds national
+# stock) while the page says "Not deliverable at your location". Stock you
+# cannot receive is not stock, so this must read as unobtainable.
+flipkart_live = (
+    "<title>SONY PlayStation5 Console (slim)</title>"
+    "<div>Buy now</div><span>Not deliverable at your location</span>"
+    '<script type="application/ld+json">{"offers":{"availability":'
+    '"https:\\u002f\\u002fschema.org\\u002fInStock"}}</script>'
+)
+check("InStock + undeliverable -> not obtainable", parse_stock(flipkart_live), False)
+check("delivery refusal detected", parse_delivery_blocked(flipkart_live), True)
+check(
+    "InStock + deliverable -> obtainable",
+    parse_stock(
+        "<div>Buy now</div>"
+        '<script>{"availability":"https:\\u002f\\u002fschema.org\\u002fInStock"}</script>'
+    ),
+    True,
+)
+check(
+    "'not serviceable' phrasing also caught",
+    parse_stock('<div>Add to Cart</div><span>Pincode not serviceable</span>'),
+    False,
+)
+check("no refusal text on a clean page", parse_delivery_blocked("<div>Buy now</div>"), False)
 
 print("parse_price / parse_name:")
 check("price", parse_price("<b>₹54,990</b>"), "₹54,990")

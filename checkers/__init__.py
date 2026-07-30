@@ -9,13 +9,13 @@ from checkers import (
     vijaysales,
 )
 
-# Amazon is listed separately in main.py because it needs a browser and runs
-# sequentially; the rest are safe to run concurrently.
-BROWSER_CHECKERS = {"amazon": amazon}
+# Browser-based checkers run sequentially so only one Chromium exists at a time.
+# Amazon's session flow resists HTTP replication; Croma (and its API) return 403
+# to httpx regardless of headers.
+BROWSER_CHECKERS = {"amazon": amazon, "croma": croma}
 
 HTTP_CHECKERS = {
     "flipkart": flipkart,
-    "croma": croma,
     "reliancedigital": reliancedigital,
     "vijaysales": vijaysales,
     "sonycenter": sonycenter,

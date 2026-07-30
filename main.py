@@ -8,10 +8,13 @@ Usage:
     python main.py --test-notify    # send a test message to every channel
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -23,14 +26,15 @@ import state as state_module
 from checkers import ALL_CHECKERS, BROWSER_CHECKERS, HTTP_CHECKERS
 
 ROOT = Path(__file__).parent
-CONFIG_PATH = ROOT / "config.json"
-LOG_PATH = ROOT / "logs" / "run.log"
+# Both overridable so a container can read config from, and log to, a volume.
+CONFIG_PATH = Path(os.getenv("PS5_CONFIG_PATH") or ROOT / "config.json")
+LOG_PATH = Path(os.getenv("PS5_LOG_PATH") or ROOT / "logs" / "run.log")
 
 log = logging.getLogger("ps5")
 
 
 def setup_logging() -> None:
-    LOG_PATH.parent.mkdir(exist_ok=True)
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -55,7 +59,29 @@ def load_config() -> dict:
     if unknown:
         raise SystemExit(f"unknown retailer(s) in config: {', '.join(sorted(unknown))}")
 
-    return {"pincode": pincode, "retailers": retailers}
+    overrides = config.get("pincode_overrides") or {}
+    unknown_overrides = set(overrides) - set(ALL_CHECKERS)
+    if unknown_overrides:
+        raise SystemExit(
+            "unknown retailer(s) in pincode_overrides: "
+            f"{', '.join(sorted(unknown_overrides))}"
+        )
+    overrides = {
+        retailer: str(value).strip()
+        for retailer, value in overrides.items()
+        if str(value).strip()
+    }
+
+    return {
+        "pincode": pincode,
+        "retailers": retailers,
+        "pincode_overrides": overrides,
+    }
+
+
+def pincode_for(config: dict, retailer: str) -> str:
+    """Pincode to use for a retailer — its override if set, else the default."""
+    return config["pincode_overrides"].get(retailer, config["pincode"])
 
 
 def targets(config: dict, only: str | None) -> tuple[list, list]:
@@ -75,7 +101,6 @@ def targets(config: dict, only: str | None) -> tuple[list, list]:
 async def run_checks(config: dict, only: str | None) -> list:
     """Run http checkers concurrently, then browser checkers one at a time."""
     http_targets, browser_targets = targets(config, only)
-    pincode = config["pincode"]
     results = []
 
     if http_targets:
@@ -83,7 +108,9 @@ async def run_checks(config: dict, only: str | None) -> list:
             results.extend(
                 await asyncio.gather(
                     *(
-                        HTTP_CHECKERS[retailer].check(url, pincode, client=client)
+                        HTTP_CHECKERS[retailer].check(
+                            url, pincode_for(config, retailer), client=client
+                        )
                         for retailer, url in http_targets
                     )
                 )
@@ -91,19 +118,32 @@ async def run_checks(config: dict, only: str | None) -> list:
 
     # Sequential: only one Chromium instance should ever exist at a time.
     for retailer, url in browser_targets:
-        results.append(await BROWSER_CHECKERS[retailer].check(url, pincode))
+        results.append(
+            await BROWSER_CHECKERS[retailer].check(url, pincode_for(config, retailer))
+        )
 
     return results
 
 
 def stock_message(result, pincode: str) -> str:
+    if result.pincode_verified:
+        header = f"🎮 PS5 IN STOCK — deliverable to {pincode}"
+        caveat = ""
+    else:
+        header = "🎮 PS5 IN STOCK (national) — pincode NOT verified"
+        caveat = (
+            f"\n⚠️ Confirm delivery to {pincode} on the site. This retailer "
+            "renders serviceability client-side, so the check sees national "
+            "stock only."
+        )
+
     return (
-        "🎮 PS5 IN STOCK\n"
+        f"{header}\n"
         f"Retailer: {result.retailer}\n"
         f"Product: {result.name or 'unknown'}\n"
         f"Price: {result.price or 'unknown'}\n"
-        f"Pincode: {pincode}\n"
         f"{result.url}"
+        f"{caveat}"
     )
 
 
@@ -116,18 +156,25 @@ def broken_message(result) -> str:
     )
 
 
-def report(results: list, pincode: str, dry_run: bool) -> int:
+def report(results: list, config: dict, dry_run: bool) -> int:
     """Diff results against saved state, alert on transitions, persist. Returns exit code."""
     current = state_module.load()
     stock_alerts, broken_alerts = [], []
 
     for result in results:
-        status = (
-            f"ERROR ({result.error})"
-            if not result.ok
-            else ("IN STOCK" if result.in_stock else "no stock")
+        if not result.ok:
+            status = f"ERROR ({result.error})"
+        elif result.in_stock:
+            status = "IN STOCK" if result.pincode_verified else "IN STOCK (national)"
+        else:
+            status = "no stock"
+        log.info(
+            "%s [%s] | %s | %s",
+            result.retailer,
+            pincode_for(config, result.retailer),
+            status,
+            result.url,
         )
-        log.info("%s | %s | %s", result.retailer, status, result.url)
 
         alert_stock, alert_broken = state_module.apply(current, result)
         if alert_stock:
@@ -137,7 +184,10 @@ def report(results: list, pincode: str, dry_run: bool) -> int:
 
     if dry_run:
         for result in stock_alerts:
-            log.info("[dry-run] would send stock alert:\n%s", stock_message(result, pincode))
+            log.info(
+                "[dry-run] would send stock alert:\n%s",
+                stock_message(result, pincode_for(config, result.retailer)),
+            )
         for result in broken_alerts:
             log.info("[dry-run] would send breakage alert:\n%s", broken_message(result))
         log.info(
@@ -148,7 +198,9 @@ def report(results: list, pincode: str, dry_run: bool) -> int:
         return 0
 
     for result in stock_alerts:
-        notifiers.broadcast(stock_message(result, pincode))
+        notifiers.broadcast(
+            stock_message(result, pincode_for(config, result.retailer))
+        )
     for result in broken_alerts:
         notifiers.broadcast(broken_message(result), channels=notifiers.BREAKAGE_CHANNELS)
 
@@ -197,7 +249,7 @@ def main() -> int:
         log.warning("no product URLs configured — add some to config.json")
         return 0
 
-    return report(results, config["pincode"], args.dry_run)
+    return report(results, config, args.dry_run)
 
 
 if __name__ == "__main__":

@@ -1,20 +1,20 @@
-"""croma checker."""
+"""Croma checker — headless browser.
 
-import httpx
+Verified: croma.com product pages and api.croma.com both return 403 to httpx
+even with a full browser-like header set (Akamai). A real browser is required.
+"""
 
+from __future__ import annotations
+
+from checkers.browser import rendered_check
 from checkers.common import CheckResult
-from checkers.generic import page_check
 
 RETAILER = "croma"
 
+# Croma renders the buybox client-side; wait for one of these before reading.
+WAIT_FOR = "script[type='application/ld+json'], .pdp-add-to-cart, #buyNow"
 
-async def check(
-    url: str, pincode: str, client: httpx.AsyncClient | None = None
-) -> CheckResult:
-    """Check one croma product URL.
 
-    Currently infers stock from the product page text. To make this
-    pincode-accurate, replace the body with a direct call to the site's
-    serviceability endpoint (see README "Verifying a checker").
-    """
-    return await page_check(RETAILER, url, client=client)
+async def check(url: str, pincode: str, client=None) -> CheckResult:
+    """Check one Croma product URL in a headless browser."""
+    return await rendered_check(RETAILER, url, wait_for=WAIT_FOR)

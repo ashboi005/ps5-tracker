@@ -4,11 +4,18 @@ Shape of state.json:
     {"<url>": {"in_stock": bool, "fail_count": int, "broken_notified": bool}}
 """
 
+from __future__ import annotations
+
 import json
 import logging
+import os
 from pathlib import Path
 
-STATE_PATH = Path(__file__).parent / "state.json"
+# Overridable so a container can keep state on a mounted volume; without that,
+# every redeploy would forget what was in stock and re-alert on everything.
+STATE_PATH = Path(
+    os.getenv("PS5_STATE_PATH") or Path(__file__).parent / "state.json"
+)
 
 # Consecutive failed checks before we warn that a checker looks broken.
 # At a 30-minute cadence this is ~90 minutes blind.

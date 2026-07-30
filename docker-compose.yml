@@ -1,0 +1,24 @@
+services:
+  ps5-tracker:
+    build: .
+    restart: unless-stopped
+    environment:
+      # Every 30 minutes.
+      CHECK_INTERVAL_SECONDS: 1800
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      EMAIL_FROM: ${EMAIL_FROM}
+      EMAIL_TO: ${EMAIL_TO}
+    volumes:
+      # Keeps state.json across redeploys, so you are not re-alerted on restart.
+      - ps5-data:/data
+      # Edit product URLs without rebuilding the image.
+      - ./config.json:/app/config.json:ro
+
+volumes:
+  ps5-data:

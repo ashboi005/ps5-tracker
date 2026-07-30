@@ -1,5 +1,7 @@
 """Shared types for retailer checkers."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 
@@ -19,6 +21,13 @@ class CheckResult:
     price: str | None = None
     name: str | None = None
     error: str | None = None
+
+    # True only when the check actually confirmed serviceability for the
+    # configured pincode. Most sites render that verdict client-side after
+    # resolving your location, so an anonymous page fetch sees national stock
+    # only. Alerts say which kind of hit they are, so a "national stock,
+    # pincode unverified" result is never mistaken for a confirmed buy.
+    pincode_verified: bool = False
 
     @property
     def ok(self) -> bool:

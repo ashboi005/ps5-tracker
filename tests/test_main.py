@@ -71,31 +71,64 @@ expect_exit("unknown retailer", main.load_config)
 with_config({"pincode": 143001, "retailers": {}})
 check("numeric pincode coerced", main.load_config()["pincode"], "143001")
 
+print("per-retailer pincode overrides:")
+with_config(
+    {
+        "pincode": "143001",
+        "pincode_overrides": {"croma": "141001"},
+        "retailers": {"croma": ["https://c"], "flipkart": ["https://f"]},
+    }
+)
+cfg_ov = main.load_config()
+check("override applies to croma", main.pincode_for(cfg_ov, "croma"), "141001")
+check("default applies elsewhere", main.pincode_for(cfg_ov, "flipkart"), "143001")
+
+with_config({"pincode": "143001", "retailers": {}})
+check("no overrides key is fine", main.pincode_for(main.load_config(), "croma"), "143001")
+
+with_config({"pincode": "143001", "pincode_overrides": {"croma": "  "}, "retailers": {}})
+check(
+    "blank override falls back",
+    main.pincode_for(main.load_config(), "croma"),
+    "143001",
+)
+
+with_config({"pincode": "143001", "pincode_overrides": {"blinkit": "1"}, "retailers": {}})
+expect_exit("unknown retailer in overrides", main.load_config)
+
 print("target splitting:")
 cfg = {
     "pincode": "143001",
     "retailers": {
-        "croma": ["https://croma/a", "  ", "https://croma/b"],
+        "flipkart": ["https://fk/a", "  ", "https://fk/b"],
         "amazon": ["https://amazon/a"],
-        "flipkart": [],
+        "croma": ["https://croma/a"],
+        "sonycenter": [],
     },
 }
 http_t, browser_t = main.targets(cfg, None)
 check("http targets skip blanks", len(http_t), 2)
-check("amazon routed to browser", browser_t, [("amazon", "https://amazon/a")])
-check("browser excluded from http", [r for r, _ in http_t], ["croma", "croma"])
+check("http targets are the httpx sites", [r for r, _ in http_t], ["flipkart", "flipkart"])
+check(
+    "amazon and croma both routed to browser",
+    sorted(r for r, _ in browser_t),
+    ["amazon", "croma"],
+)
+
+http_t, browser_t = main.targets(cfg, "flipkart")
+check("--check flipkart filters http", len(http_t), 2)
+check("--check flipkart excludes browser sites", browser_t, [])
 
 http_t, browser_t = main.targets(cfg, "croma")
-check("--check croma filters http", len(http_t), 2)
-check("--check croma excludes amazon", browser_t, [])
+check("--check croma routes to browser only", (len(http_t), len(browser_t)), (0, 1))
 
 http_t, browser_t = main.targets(cfg, "amazon")
 check("--check amazon filters", (len(http_t), len(browser_t)), (0, 1))
 
 check(
     "non-string url ignored",
-    main.targets({"pincode": "1", "retailers": {"croma": [None, 42, "https://ok"]}}, None)[0],
-    [("croma", "https://ok")],
+    main.targets({"pincode": "1", "retailers": {"flipkart": [None, 42, "https://ok"]}}, None)[0],
+    [("flipkart", "https://ok")],
 )
 
 print("message formatting:")
@@ -121,8 +154,9 @@ state_path.unlink(missing_ok=True)
 import state as state_module
 
 state_module.STATE_PATH = state_path
+cfg_report = {"pincode": "143001", "pincode_overrides": {}, "retailers": {}}
 code = main.report(
-    [CheckResult("croma", "https://x", in_stock=True, name="PS5")], "143001", True
+    [CheckResult("croma", "https://x", in_stock=True, name="PS5")], cfg_report, True
 )
 check("dry-run exit 0", code, 0)
 check("dry-run left no state file", state_path.exists(), False)

@@ -7,19 +7,34 @@ checker overrides `check()` to call that endpoint directly (much faster and
 pincode-accurate). See README "Verifying a checker".
 """
 
+from __future__ import annotations
+
 import re
 
 import httpx
 
 TIMEOUT = 10.0
 
+# A full browser-like header set. Verified necessary: with a bare User-Agent,
+# Flipkart returns 403; with these it returns 200.
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-IN,en;q=0.9",
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
+    "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 # Ordered most-specific first: an out-of-stock phrase must win over a generic
@@ -68,13 +83,97 @@ def strip_tags(html: str) -> str:
     return re.sub(r"<[^>]+>", " ", without_scripts)
 
 
-def parse_stock(html: str) -> bool:
-    """Infer stock from page text. Out-of-stock signals take precedence."""
+# schema.org availability values, as they appear in JSON-LD product markup.
+# Both Flipkart and Sony Center expose this, and it is authoritative — unlike
+# page text, which is littered with JS template strings and unrelated copy.
+AVAILABILITY_RE = re.compile(r'"availability"\s*:\s*"([^"]+)"', re.I)
+
+IN_STOCK_TERMS = ("instock", "limitedavailability", "onlineonly", "instoreonly")
+OUT_OF_STOCK_TERMS = (
+    "outofstock",
+    "soldout",
+    "discontinued",
+    "presale",
+    "preorder",
+    "backorder",
+)
+
+
+def parse_jsonld_availability(html: str) -> bool | None:
+    """Read schema.org availability. Returns None when the markup is absent.
+
+    A page may carry several offers; any in-stock offer means buyable.
+    """
+    values = [
+        # Flipkart emits the URL both plainly and with escaped slashes.
+        value.replace("\\u002f", "/").rsplit("/", 1)[-1].strip().lower()
+        for value in AVAILABILITY_RE.findall(html)
+    ]
+    if not values:
+        return None
+    if any(v in IN_STOCK_TERMS for v in values):
+        return True
+    if any(v in OUT_OF_STOCK_TERMS for v in values):
+        return False
+    return None
+
+
+def parse_stock_from_text(html: str) -> bool | None:
+    """Fallback text heuristic. Returns None when the page is ambiguous.
+
+    Deliberately refuses to guess: a page containing both "add to cart" and an
+    out-of-stock phrase (common, thanks to JS templates) returns None so the
+    caller can report "unknown" instead of a false "sold out".
+    """
     text = strip_tags(html).lower()
-    for signal in OUT_OF_STOCK_SIGNALS:
-        if signal in text:
-            return False
-    return any(signal in text for signal in IN_STOCK_SIGNALS)
+    out_hits = [s for s in OUT_OF_STOCK_SIGNALS if s in text]
+    in_hits = [s for s in IN_STOCK_SIGNALS if s in text]
+    if out_hits and in_hits:
+        return None
+    if out_hits:
+        return False
+    if in_hits:
+        return True
+    return None
+
+
+# Pincode-level refusals. These are stronger than schema.org availability: a
+# seller can hold national stock (JSON-LD "InStock") while refusing to deliver
+# to your pincode. Since only buyable-here stock matters, these win.
+DELIVERY_BLOCKED_SIGNALS = (
+    "not deliverable at your location",
+    "not deliverable to your location",
+    "delivery not available",
+    "not serviceable",
+    "no longer serviceable",
+    "cannot be delivered to",
+    "currently not serviceable",
+    "not available at your location",
+    "not deliverable",
+)
+
+
+def parse_delivery_blocked(html: str) -> bool:
+    """True if the page explicitly refuses delivery to the current location."""
+    text = strip_tags(html).lower()
+    return any(signal in text for signal in DELIVERY_BLOCKED_SIGNALS)
+
+
+def parse_stock(html: str) -> bool | None:
+    """Is this buyable *and* deliverable here? None if the page is unclear.
+
+    Precedence, strongest first:
+      1. An explicit pincode-level delivery refusal -> not obtainable.
+      2. schema.org availability -> authoritative national stock.
+      3. Page text heuristics -> ambiguous pages return None, never a guess.
+    """
+    if parse_delivery_blocked(html):
+        return False
+
+    availability = parse_jsonld_availability(html)
+    if availability is not None:
+        return availability
+    return parse_stock_from_text(html)
 
 
 def parse_price(html: str) -> str | None:

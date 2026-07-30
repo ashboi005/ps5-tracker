@@ -50,6 +50,14 @@ tell them apart.
 
 ## Run it
 
+Containerised (recommended — see Coolify section below):
+
+```bash
+docker compose up --build
+```
+
+Or bare-metal with cron:
+
 ```bash
 venv/bin/python main.py                   # once, to seed state.json
 crontab -e
@@ -61,28 +69,84 @@ crontab -e
 
 ## How stock detection works
 
-The five non-Amazon checkers fetch the product page and read stock signals from
-its text (`checkers/http.py`), with out-of-stock phrases taking precedence over
-a generic "add to cart". Amazon gets a real headless Chromium
-(`checkers/amazon.py`) because its session flow resists plain HTTP replication;
-only one browser exists at a time and it closes immediately after each check.
+Stock is read with this precedence (`checkers/http.py`):
 
-**This means stock detection is currently page-level, not pincode-level.** The
-pincode is plumbed through to every checker but the page-text path does not yet
-use it — see below.
+1. **An explicit pincode delivery refusal** ("not deliverable at your location",
+   "not serviceable") — strongest signal. A seller can hold national stock while
+   refusing your pincode, and stock you cannot receive is not stock.
+2. **schema.org `availability` in JSON-LD** — authoritative national stock.
+   Verified present on Flipkart and Sony Center.
+3. **Page-text heuristics** — last resort. If a page contains *both* in- and
+   out-of-stock phrases (common, thanks to JS templates), this returns
+   "unknown" rather than guessing.
+
+"Unknown" is reported as a **failed check**, never as "no stock". A silent false
+negative is the one failure that defeats the tracker, so ambiguity is always
+surfaced instead of resolved by guessing.
+
+### Which checker uses what — all verified against live sites
+
+| Retailer | Method | Why |
+|---|---|---|
+| Sony Center | Shopify `<product>.js` JSON | Authoritative `available` + price. Page text contains the template string `default title - sold out`, which fools text parsing. |
+| Flipkart | httpx + JSON-LD | 403s with a bare User-Agent; 200 with the full browser-like header set in `HEADERS`. |
+| Croma | headless Chromium | Both `croma.com` and `api.croma.com` return 403 to httpx regardless of headers (Akamai). |
+| Amazon | headless Chromium | Session/cookie flow resists HTTP replication. Rejects non-`amazon.in` hosts, since `amazon.com` reflects US stock. |
+| Reliance Digital, Vijay Sales | httpx + JSON-LD | Not yet verified against live pages. |
+
+### The pincode limitation — read this
+
+Most of these sites render delivery serviceability **client-side**, after
+resolving your location. An anonymous page fetch therefore sees *national*
+stock, not your-pincode stock.
+
+The tracker is explicit about this rather than pretending otherwise:
+
+- `pincode_verified=True` → serviceability for your pincode was genuinely
+  confirmed. Alert reads **"IN STOCK — deliverable to <pincode>"**.
+- `pincode_verified=False` → national stock only. Alert reads **"IN STOCK
+  (national) — pincode NOT verified"** and tells you to confirm on the site.
+
+Right now **every checker reports `False`** — treat those alerts as "worth
+looking at now", not "confirmed buyable". A real observed case: a Flipkart PS5
+listing whose JSON-LD says `InStock` while the page shows "Not deliverable at
+your location".
 
 ### Making a checker pincode-accurate
 
-Each retailer's pincode widget calls an internal JSON endpoint. To use it:
+To upgrade a checker to real pincode verification:
 
 1. Open the product page in a browser, DevTools → Network, filter XHR.
 2. Enter your pincode in the site's delivery-check field.
-3. Find the request that fires and note its URL, method, headers and payload.
+3. Find the request that fires; note its URL, method, headers and payload.
 4. Replace that retailer's `check()` body in `checkers/<retailer>.py` with an
-   `httpx` call to it, returning a `CheckResult`.
+   `httpx` call to it, and set `pincode_verified=True` on the returned
+   `CheckResult` — only once it genuinely reflects that pincode.
 5. Verify with `--check <retailer>` against known in-stock and out-of-stock URLs.
 
 Only that one file changes; the other checkers are unaffected.
+
+## Deploying on Coolify
+
+The image is based on `mcr.microsoft.com/playwright/python`, which ships Chromium
+and its system libraries — installing those onto a plain Python base is the usual
+source of pain.
+
+`entrypoint.sh` runs one pass every `CHECK_INTERVAL_SECONDS` (default 1800) as a
+long-running service, rather than cron inside a container, which needs extra
+plumbing to forward env vars and logs to stdout.
+
+In Coolify:
+
+1. New resource → Docker Compose (or Dockerfile) from this repo.
+2. Set the env vars from `.env.example` in Coolify's UI — **not** in a committed
+   file.
+3. Keep the `ps5-data:/data` volume. It holds `state.json`; without it every
+   redeploy forgets what was in stock and re-alerts on everything.
+4. `config.json` is mounted read-only, so you can change product URLs without
+   rebuilding.
+
+Locally: `docker compose up --build`.
 
 ## Alerts
 
