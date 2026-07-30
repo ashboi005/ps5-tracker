@@ -106,10 +106,10 @@ async def run_checks(config: dict, only: str | None) -> list:
     http_targets, browser_targets = targets(config, only)
     results = []
 
-    if http_targets:
-        async with httpx.AsyncClient(
-            follow_redirects=True, proxy=http_module.PROXY_URL
-        ) as client:
+    async with httpx.AsyncClient(
+        follow_redirects=True, proxy=http_module.PROXY_URL
+    ) as client:
+        if http_targets:
             results.extend(
                 await asyncio.gather(
                     *(
@@ -121,26 +121,38 @@ async def run_checks(config: dict, only: str | None) -> list:
                 )
             )
 
-    if browser_targets:
+        if not browser_targets:
+            return results
+
         from checkers.browser import BrowserUnavailable, session
+
+        async def run_browser_targets(active) -> None:
+            """Check each browser-path URL, sequentially, sharing one browser.
+
+            Both transports are passed: the hybrid checkers try HTTP first and
+            only reach for the browser when blocked.
+            """
+            for retailer, url in browser_targets:
+                results.append(
+                    await BROWSER_CHECKERS[retailer].check(
+                        url,
+                        pincode_for(config, retailer),
+                        client=client,
+                        session_obj=active,
+                    )
+                )
 
         try:
             # One browser for the whole pass, reused across every URL. Launching
             # per URL cost minutes once most retailers moved to the browser path.
             async with session() as active:
-                for retailer, url in browser_targets:
-                    results.append(
-                        await BROWSER_CHECKERS[retailer].check(
-                            url,
-                            pincode_for(config, retailer),
-                            session_obj=active,
-                        )
-                    )
-        except BrowserUnavailable as exc:
-            results.extend(
-                CheckResult(retailer=retailer, url=url, error=str(exc))
-                for retailer, url in browser_targets
-            )
+                await run_browser_targets(active)
+        except BrowserUnavailable:
+            # No Chromium (e.g. a bare local venv). The hybrid checkers can still
+            # succeed over HTTP, so run them without a browser rather than
+            # failing every one outright.
+            log.warning("no browser available; trying HTTP-only for browser-path sites")
+            await run_browser_targets(None)
 
     return results
 

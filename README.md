@@ -264,3 +264,66 @@ be mistaken for a sell-out.
 Option 3 is worth doing regardless while you decide, since a blocked retailer
 still costs a full browser render and timeout on every pass.
 
+## Running it at home (recommended)
+
+A residential IP is what the blocked retailers accept. Measured from a home
+connection with the hybrid checkers, a full pass takes **~3 seconds** instead of
+the ~450s the VPS spent on renders that could never succeed.
+
+### With Docker (simplest — Chromium included)
+
+```bash
+cp .env .env.local          # or keep using .env
+docker compose up -d --build
+docker compose logs -f
+```
+
+That's the same compose file as the VPS. Chromium comes in the image, so all six
+retailers work.
+
+### Without Docker (native)
+
+```bash
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
+venv/bin/playwright install chromium     # needed for Amazon and Croma only
+venv/bin/python main.py --dry-run        # verify before going live
+```
+
+Then schedule it. On macOS, cron works but `launchd` survives reboots properly:
+
+```bash
+crontab -e
+```
+```cron
+*/10 * * * * cd /path/to/ps5-tracker && venv/bin/python main.py >> logs/run.log 2>&1
+```
+
+**Skipping Playwright is a valid choice.** Without it, Flipkart, Sony Center and
+Vijay Sales all still work over HTTP from a residential IP — you lose only Amazon
+and Croma, and those report a clear "playwright not installed" error rather than
+failing silently.
+
+### The one catch: sleep
+
+A sleeping laptop runs no checks. Either:
+
+- keep it awake while tracking: `caffeinate -s docker compose up`
+- or run it on something always-on (Raspberry Pi, mini PC, home server)
+
+The 12h heartbeat is what tells you it stopped — if Telegram goes quiet past a
+day, the machine slept.
+
+## Why a domain or Cloudflare proxy will not help
+
+Attaching a domain and putting Cloudflare in front of the VPS solves the
+opposite problem. Cloudflare proxies **inbound** traffic *to* your server; this
+tracker makes **outbound** requests *from* it. Flipkart and Croma never see your
+domain — they see your server's egress IP, which is unchanged by any DNS or
+inbound-proxy setup.
+
+Cloudflare WARP or Workers do alter egress, but both exit from Cloudflare's own
+datacenter ranges, which these retailers block for the same reason they block
+your VPS. To change the outcome you need a *residential* egress: run at home, or
+set `PROXY_URL` to a residential proxy.
+

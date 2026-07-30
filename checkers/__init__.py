@@ -9,10 +9,11 @@ from checkers import (
     vijaysales,
 )
 
-# Browser-based checkers share one Chromium per pass (see browser.session).
-# All four were moved here after live testing from a VPS: Amazon's session flow
-# resists HTTP replication, Croma returns 403, Sony Center returns 429 on every
-# attempt, and Flipkart drops the connection outright.
+# Checkers that may need a browser. They share one Chromium per pass (see
+# browser.session) and receive both transports, because Flipkart and Sony Center
+# are hybrids: they try HTTP first (which works from a residential IP) and reach
+# for the browser only when blocked. Amazon always needs it; Croma returns 403 to
+# httpx from every IP tested.
 BROWSER_CHECKERS = {
     "amazon": amazon,
     "croma": croma,
