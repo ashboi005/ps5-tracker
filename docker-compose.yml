@@ -23,5 +23,17 @@ services:
       # Edit product URLs without rebuilding the image.
       - ./config.json:/app/config.json:ro
 
+    # This is a worker with no HTTP server, so there is nothing to expose and no
+    # domain to attach. Declaring this check explicitly stops an orchestrator
+    # from probing for an open port, finding none, and restart-looping the
+    # container. Health here means "a check pass ran recently".
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 5m
+      timeout: 30s
+      retries: 3
+      # Long enough for image start plus the first full pass (browser included).
+      start_period: 5m
+
 volumes:
   ps5-data:
