@@ -45,6 +45,36 @@ class Session:
 
     def __init__(self, browser) -> None:
         self._browser = browser
+        self._contexts: dict[str, object] = {}
+
+    async def _new_context(self):
+        return await self._browser.new_context(
+            locale="en-IN",
+            user_agent=USER_AGENT,
+            viewport={"width": 1440, "height": 900},
+            timezone_id="Asia/Kolkata",
+        )
+
+    async def keyed_context(self, key: str):
+        """A context that persists across URLs, keyed by retailer.
+
+        Needed where site state must be established once and then reused —
+        Flipkart's delivery pincode is set through its UI and then applies to
+        every subsequent product page in the same context. Returns
+        (context, created_now) so callers can prime a fresh one.
+        """
+        existing = self._contexts.get(key)
+        if existing is not None:
+            return existing, False
+        context = await self._new_context()
+        self._contexts[key] = context
+        return context, True
+
+    async def close(self) -> None:
+        for context in self._contexts.values():
+            with contextlib.suppress(Exception):
+                await context.close()
+        self._contexts.clear()
 
     async def render(
         self,
@@ -54,9 +84,7 @@ class Session:
     ) -> str:
         # A fresh context per page keeps cookies from one retailer out of the
         # next, while still avoiding a full browser relaunch.
-        context = await self._browser.new_context(
-            locale="en-IN", user_agent=USER_AGENT
-        )
+        context = await self._new_context()
         try:
             page = await context.new_page()
             page.set_default_timeout(TIMEOUT_MS)
@@ -99,10 +127,22 @@ async def session():
         if PROXY_URL:
             launch_kwargs["proxy"] = {"server": PROXY_URL}
         browser = await playwright.chromium.launch(**launch_kwargs)
+        active = Session(browser)
         try:
-            yield Session(browser)
+            yield active
         finally:
+            await active.close()
             await browser.close()
+
+
+async def settle(page, wait_for: str | None, wait_until: str) -> None:
+    """Best-effort waits after navigation. Never fatal — see Session.render."""
+    if wait_until == "networkidle":
+        with contextlib.suppress(Exception):
+            await page.wait_for_load_state("networkidle", timeout=SETTLE_MS)
+    if wait_for:
+        with contextlib.suppress(Exception):
+            await page.wait_for_selector(wait_for, timeout=SETTLE_MS)
 
 
 async def render(

@@ -203,7 +203,9 @@ notifiers_mod.broadcast = fake_broadcast
 HB = state_module.HEARTBEAT_SECONDS
 cfg_hb = {"pincode": "143001", "pincode_overrides": {}, "retailers": {}}
 no_stock = CheckResult("flipkart", "https://x", in_stock=False, name="PS5")
-in_stock = CheckResult("flipkart", "https://y", in_stock=True, name="PS5")
+in_stock = CheckResult(
+    "flipkart", "https://y", in_stock=True, name="PS5", pincode_verified=True
+)
 
 
 def run(results, seed_state):
@@ -238,6 +240,30 @@ check("stock alert fires", any("IN STOCK" in m for m, _ in msgs), True)
 check("stock alert suppresses heartbeat", len(msgs), 1)
 check("stock alert goes to all channels", msgs[0][1], notifiers_mod.STOCK_CHANNELS)
 check("stock alert also resets clock", st["_meta"]["last_heartbeat"] > time.time() - 10, True)
+
+# The reported case: national stock, pincode never confirmed -> no notification.
+unverified = CheckResult("flipkart", "https://u", in_stock=True, name="PS5")
+msgs, _ = run([unverified], {})
+check("unverified national stock sends NOTHING", msgs, [])
+
+verified = CheckResult(
+    "flipkart", "https://v", in_stock=True, name="PS5", pincode_verified=True
+)
+msgs, _ = run([verified], {})
+check("verified deliverable stock DOES alert", len(msgs), 1)
+check("  and says deliverable", "deliverable to" in msgs[0][0], True)
+check("  to all channels", msgs[0][1], notifiers_mod.STOCK_CHANNELS)
+
+# Suppression must not poison state: once verified, it still alerts.
+state_module.save({}, state_path)
+main.report([unverified], cfg_hb, False)
+sent.clear()
+main.report(
+    [CheckResult("flipkart", "https://u", in_stock=True, name="PS5", pincode_verified=True)],
+    cfg_hb,
+    False,
+)
+check("a later verified check still alerts for the same URL", len(sent), 1)
 
 # Heartbeat surfaces unreadable checks rather than calling them sold out.
 err = CheckResult("croma", "https://z", error="timeout")

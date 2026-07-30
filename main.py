@@ -17,6 +17,7 @@ import logging
 import os
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -256,7 +257,22 @@ def report(results: list, config: dict, dry_run: bool) -> int:
         if result.debug:
             log.warning("  %s diagnostic | %s", result.retailer, result.debug)
 
-        alert_stock, alert_broken = state_module.apply(current, result)
+        # National stock that was never confirmed deliverable here is not worth
+        # waking someone for — that is the case where Flipkart holds stock but
+        # refuses the pincode. Gate it BEFORE folding into state: recording it as
+        # in-stock would consume the transition, so a later genuinely-deliverable
+        # check would find nothing changed and stay silent.
+        gated = result
+        if result.ok and result.in_stock and not result.pincode_verified:
+            log.info(
+                "  not alerting: %s has national stock but delivery to %s is "
+                "unverified",
+                result.retailer,
+                pincode_for(config, result.retailer),
+            )
+            gated = replace(result, in_stock=False)
+
+        alert_stock, alert_broken = state_module.apply(current, gated)
         if alert_stock:
             stock_alerts.append(result)
         if alert_broken:

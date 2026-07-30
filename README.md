@@ -106,23 +106,37 @@ honouring it there would report permanent false sell-outs. Flipkart's equivalent
 message is real. Sites opt **out**, so an unaudited site errs toward "cannot buy"
 rather than over-promising.
 
-### The pincode limitation — read this
+### Pincode verification, and when you get alerted
 
-Most of these sites render delivery serviceability **client-side**, after
-resolving your location. An anonymous page fetch therefore sees *national*
-stock, not your-pincode stock.
+**You are never notified about stock that is not confirmed deliverable to your
+pincode.** A listing can hold national stock (JSON-LD `InStock`) while refusing
+your address — Flipkart does exactly this — and alerting on that is noise.
 
-The tracker is explicit about this rather than pretending otherwise:
+- `pincode_verified=True` -> serviceability genuinely confirmed. Alert reads
+  **"IN STOCK - deliverable to <pincode>"** and goes to all three channels.
+- `pincode_verified=False` -> national stock only. **No notification.** It is
+  logged as `not alerting: ... delivery to <pincode> is unverified` and appears
+  in the 12h heartbeat summary.
 
-- `pincode_verified=True` → serviceability for your pincode was genuinely
-  confirmed. Alert reads **"IN STOCK — deliverable to <pincode>"**.
-- `pincode_verified=False` → national stock only. Alert reads **"IN STOCK
-  (national) — pincode NOT verified"** and tells you to confirm on the site.
+**Flipkart verifies for real.** Its pincode is set through the site UI once per
+pass; the state persists across product pages in one browser context, so priming
+costs one extra page load per run rather than one per URL:
 
-Right now **every checker reports `False`** — treat those alerts as "worth
-looking at now", not "confirmed buyable". A real observed case: a Flipkart PS5
-listing whose JSON-LD says `InStock` while the page shows "Not deliverable at
-your location".
+1. click "Select Delivery Location"
+2. type the pincode into the "Search by area, street name, pin code" typeahead
+3. click the `<State> <pin> India` suggestion - pressing Enter does nothing
+4. click "Confirm" on the map dialog
+
+The "Delivery details" block then reads either an address plus a delivery date,
+or "Not deliverable at your location", which is authoritative.
+
+Amazon, Sony Center and Vijay Sales do **not** verify pincode yet, so national
+stock there is logged but never notified. Implementing verification for one of
+them is what turns its alerts on.
+
+Suppression is applied *before* state is updated, deliberately: recording
+unverified stock as in-stock would consume the transition, so a later genuinely
+deliverable check would look unchanged and stay silent.
 
 ### Making a checker pincode-accurate
 
