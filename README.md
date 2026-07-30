@@ -272,14 +272,29 @@ the ~450s the VPS spent on renders that could never succeed.
 
 ### With Docker (simplest — Chromium included)
 
+One command, with Docker Desktop running:
+
 ```bash
-cp .env .env.local          # or keep using .env
-docker compose up -d --build
-docker compose logs -f
+cd ~/Code/ps5-tracker && docker compose up -d --build && docker compose logs -f
 ```
 
-That's the same compose file as the VPS. Chromium comes in the image, so all six
-retailers work.
+Builds the image, starts the container detached, then tails the logs.
+**Ctrl+C stops only the log tail** — the container keeps checking every 10
+minutes. `restart: unless-stopped` means it also comes back by itself after a
+Docker Desktop or Mac restart.
+
+Chromium ships in the image, so all six retailers work. The base image has a
+native `linux/arm64` build, so it runs unemulated on Apple Silicon.
+
+Day-to-day:
+
+```bash
+docker compose logs -f              # watch it
+docker compose logs --tail=50       # recent passes
+docker compose restart              # after editing config.json
+docker compose down                 # stop (state.json survives in the volume)
+docker compose exec ps5-tracker python main.py --dry-run   # one-off check, sends nothing
+```
 
 ### Without Docker (native)
 
