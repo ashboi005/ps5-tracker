@@ -132,7 +132,7 @@ The image is based on `mcr.microsoft.com/playwright/python`, which ships Chromiu
 and its system libraries — installing those onto a plain Python base is the usual
 source of pain.
 
-`entrypoint.sh` runs one pass every `CHECK_INTERVAL_SECONDS` (default 1800) as a
+`entrypoint.sh` runs one pass every `CHECK_INTERVAL_SECONDS` (default 3600) as a
 long-running service, rather than cron inside a container, which needs extra
 plumbing to forward env vars and logs to stdout.
 
