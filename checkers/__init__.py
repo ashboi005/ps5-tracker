@@ -9,16 +9,20 @@ from checkers import (
     vijaysales,
 )
 
-# Browser-based checkers run sequentially so only one Chromium exists at a time.
-# Amazon's session flow resists HTTP replication; Croma (and its API) return 403
-# to httpx regardless of headers.
-BROWSER_CHECKERS = {"amazon": amazon, "croma": croma}
+# Browser-based checkers share one Chromium per pass (see browser.session).
+# All four were moved here after live testing from a VPS: Amazon's session flow
+# resists HTTP replication, Croma returns 403, Sony Center returns 429 on every
+# attempt, and Flipkart drops the connection outright.
+BROWSER_CHECKERS = {
+    "amazon": amazon,
+    "croma": croma,
+    "flipkart": flipkart,
+    "sonycenter": sonycenter,
+}
 
 HTTP_CHECKERS = {
-    "flipkart": flipkart,
     "reliancedigital": reliancedigital,
     "vijaysales": vijaysales,
-    "sonycenter": sonycenter,
 }
 
 ALL_CHECKERS = {**HTTP_CHECKERS, **BROWSER_CHECKERS}

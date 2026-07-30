@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 import notifiers
 import state as state_module
 from checkers import ALL_CHECKERS, BROWSER_CHECKERS, HTTP_CHECKERS
+from checkers.common import CheckResult
 
 ROOT = Path(__file__).parent
 # Both overridable so a container can read config from, and log to, a volume.
@@ -117,11 +118,26 @@ async def run_checks(config: dict, only: str | None) -> list:
                 )
             )
 
-    # Sequential: only one Chromium instance should ever exist at a time.
-    for retailer, url in browser_targets:
-        results.append(
-            await BROWSER_CHECKERS[retailer].check(url, pincode_for(config, retailer))
-        )
+    if browser_targets:
+        from checkers.browser import BrowserUnavailable, session
+
+        try:
+            # One browser for the whole pass, reused across every URL. Launching
+            # per URL cost minutes once most retailers moved to the browser path.
+            async with session() as active:
+                for retailer, url in browser_targets:
+                    results.append(
+                        await BROWSER_CHECKERS[retailer].check(
+                            url,
+                            pincode_for(config, retailer),
+                            session_obj=active,
+                        )
+                    )
+        except BrowserUnavailable as exc:
+            results.extend(
+                CheckResult(retailer=retailer, url=url, error=str(exc))
+                for retailer, url in browser_targets
+            )
 
     return results
 
@@ -203,6 +219,11 @@ def report(results: list, config: dict, dry_run: bool) -> int:
             status,
             result.url,
         )
+
+        # Surface the parser's view of an unclear page straight into the logs,
+        # so it can be diagnosed without shell access to the container.
+        if result.debug:
+            log.warning("  %s diagnostic | %s", result.retailer, result.debug)
 
         alert_stock, alert_broken = state_module.apply(current, result)
         if alert_stock:

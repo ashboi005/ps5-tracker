@@ -6,7 +6,7 @@ even with a full browser-like header set (Akamai). A real browser is required.
 
 from __future__ import annotations
 
-from checkers.browser import rendered_check
+from checkers.browser import Session, rendered_check
 from checkers.common import CheckResult
 
 RETAILER = "croma"
@@ -15,12 +15,21 @@ RETAILER = "croma"
 WAIT_FOR = "script[type='application/ld+json'], .pdp-add-to-cart, #buyNow"
 
 
-async def check(url: str, pincode: str, client=None) -> CheckResult:
+async def check(
+    url: str,
+    pincode: str,
+    client=None,
+    session_obj: Session | None = None,
+) -> CheckResult:
     """Check one Croma product URL in a headless browser.
 
     Waits for network idle: with domcontentloaded the JSON-LD had not been
     injected yet, so checks reported "no schema.org markup".
     """
     return await rendered_check(
-        RETAILER, url, wait_for=WAIT_FOR, wait_until="networkidle"
+        RETAILER,
+        url,
+        wait_for=WAIT_FOR,
+        wait_until="networkidle",
+        session_obj=session_obj,
     )

@@ -9,7 +9,13 @@ from __future__ import annotations
 import httpx
 
 from checkers.common import CheckResult, truncate
-from checkers.http import fetch, parse_name, parse_price, parse_stock
+from checkers.http import (
+    fetch,
+    parse_name,
+    parse_price,
+    parse_stock,
+    signal_report,
+)
 
 
 async def page_check(
@@ -38,6 +44,7 @@ async def page_check(
             url=url,
             name=truncate(parse_name(html)),
             error="could not determine stock (no schema.org markup, ambiguous text)",
+            debug=signal_report(html),
         )
 
     return CheckResult(

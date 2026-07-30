@@ -98,38 +98,42 @@ with_config({"pincode": "143001", "pincode_overrides": {"blinkit": "1"}, "retail
 expect_exit("unknown retailer in overrides", main.load_config)
 
 print("target splitting:")
+# Derived from the registry rather than hardcoded, so moving a retailer between
+# the httpx and browser paths does not invalidate these assertions.
+from checkers import BROWSER_CHECKERS, HTTP_CHECKERS
+
+A_BROWSER = sorted(BROWSER_CHECKERS)[0]
+AN_HTTP = sorted(HTTP_CHECKERS)[0]
+
 cfg = {
     "pincode": "143001",
     "retailers": {
-        "flipkart": ["https://fk/a", "  ", "https://fk/b"],
-        "amazon": ["https://amazon/a"],
-        "croma": ["https://croma/a"],
-        "sonycenter": [],
+        AN_HTTP: ["https://h/a", "  ", "https://h/b"],
+        A_BROWSER: ["https://b/a"],
     },
 }
 http_t, browser_t = main.targets(cfg, None)
 check("http targets skip blanks", len(http_t), 2)
-check("http targets are the httpx sites", [r for r, _ in http_t], ["flipkart", "flipkart"])
-check(
-    "amazon and croma both routed to browser",
-    sorted(r for r, _ in browser_t),
-    ["amazon", "croma"],
-)
+check("http targets are the httpx sites", [r for r, _ in http_t], [AN_HTTP, AN_HTTP])
+check("browser site routed to browser", browser_t, [(A_BROWSER, "https://b/a")])
+check("no overlap between the two buckets", set(r for r, _ in http_t) & set(r for r, _ in browser_t), set())
 
-http_t, browser_t = main.targets(cfg, "flipkart")
-check("--check flipkart filters http", len(http_t), 2)
-check("--check flipkart excludes browser sites", browser_t, [])
+http_t, browser_t = main.targets(cfg, AN_HTTP)
+check(f"--check {AN_HTTP} filters http", len(http_t), 2)
+check(f"--check {AN_HTTP} excludes browser sites", browser_t, [])
 
-http_t, browser_t = main.targets(cfg, "croma")
-check("--check croma routes to browser only", (len(http_t), len(browser_t)), (0, 1))
-
-http_t, browser_t = main.targets(cfg, "amazon")
-check("--check amazon filters", (len(http_t), len(browser_t)), (0, 1))
+http_t, browser_t = main.targets(cfg, A_BROWSER)
+check(f"--check {A_BROWSER} routes to browser only", (len(http_t), len(browser_t)), (0, 1))
 
 check(
     "non-string url ignored",
-    main.targets({"pincode": "1", "retailers": {"flipkart": [None, 42, "https://ok"]}}, None)[0],
-    [("flipkart", "https://ok")],
+    main.targets({"pincode": "1", "retailers": {AN_HTTP: [None, 42, "https://ok"]}}, None)[0],
+    [(AN_HTTP, "https://ok")],
+)
+check(
+    "every configured retailer is routed somewhere",
+    set(HTTP_CHECKERS) | set(BROWSER_CHECKERS),
+    set(main.ALL_CHECKERS),
 )
 
 print("message formatting:")

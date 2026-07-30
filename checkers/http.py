@@ -211,21 +211,62 @@ def parse_delivery_blocked(html: str) -> bool:
     return any(signal in text for signal in DELIVERY_BLOCKED_SIGNALS)
 
 
-def parse_stock(html: str) -> bool | None:
+def parse_stock(html: str, delivery_signals: bool = True) -> bool | None:
     """Is this buyable *and* deliverable here? None if the page is unclear.
 
     Precedence, strongest first:
       1. An explicit pincode-level delivery refusal -> not obtainable.
       2. schema.org availability -> authoritative national stock.
       3. Page text heuristics -> ambiguous pages return None, never a guess.
+
+    `delivery_signals` is per-site because their reliability is per-site. Sony
+    Center ships a hidden "this pin code is not serviceable!" node on every
+    product page, so trusting it there would report false sell-outs; Flipkart's
+    equivalent message is real. Sites opt out rather than in, so an unaudited
+    site errs toward "cannot buy it" instead of over-promising.
     """
-    if parse_delivery_blocked(html):
+    if delivery_signals and parse_delivery_blocked(html):
         return False
 
     availability = parse_jsonld_availability(html)
     if availability is not None:
         return availability
     return parse_stock_from_text(html)
+
+
+def signal_report(html: str, limit: int = 3) -> str:
+    """Compact account of what the parsers saw, for logging an UNKNOWN result.
+
+    Includes surrounding context per hit, which is what distinguishes a real
+    "Sold Out" from a JS template string like "default title - sold out".
+    """
+    text = strip_tags(html).lower()
+
+    def hits(signals) -> list[str]:
+        found = []
+        for signal in signals:
+            index = text.find(signal)
+            if index == -1:
+                continue
+            start = max(0, index - 40)
+            snippet = " ".join(text[start : index + len(signal) + 40].split())
+            found.append(f"{signal!r} -> ...{snippet}...")
+        return found[:limit]
+
+    availability = AVAILABILITY_RE.findall(html)
+    parts = [
+        f"len={len(html)}",
+        f"jsonld={availability[:limit] or 'none'}",
+        f"title={parse_name(html)!r}",
+    ]
+    for label, signals in (
+        ("delivery_blocked", DELIVERY_BLOCKED_SIGNALS),
+        ("out_of_stock", OUT_OF_STOCK_SIGNALS),
+        ("in_stock", IN_STOCK_SIGNALS),
+    ):
+        found = hits(signals)
+        parts.append(f"{label}={found if found else 'none'}")
+    return " | ".join(parts)
 
 
 def parse_price(html: str) -> str | None:

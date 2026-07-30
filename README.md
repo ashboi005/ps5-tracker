@@ -88,11 +88,23 @@ surfaced instead of resolved by guessing.
 
 | Retailer | Method | Why |
 |---|---|---|
-| Sony Center | Shopify `<product>.js` JSON | Authoritative `available` + price. Page text contains the template string `default title - sold out`, which fools text parsing. |
-| Flipkart | httpx + JSON-LD | 403s with a bare User-Agent; 200 with the full browser-like header set in `HEADERS`. |
-| Croma | headless Chromium | Both `croma.com` and `api.croma.com` return 403 to httpx regardless of headers (Akamai). |
+| Croma | headless Chromium | 403 to httpx even with full browser headers; `api.croma.com` too (Akamai). |
+| Flipkart | headless Chromium | Works from a home IP, but from a VPS the connection is dropped — no response at all across 3 attempts. |
+| Sony Center | headless Chromium | Shopify's `<product>.js` is authoritative but returns 429 to datacenter IPs on every attempt. The rendered page carries the same answer in JSON-LD. |
 | Amazon | headless Chromium | Session/cookie flow resists HTTP replication. Rejects non-`amazon.in` hosts, since `amazon.com` reflects US stock. |
-| Reliance Digital, Vijay Sales | httpx + JSON-LD | Not yet verified against live pages. |
+| Vijay Sales | httpx + JSON-LD | Works directly. Needs **product** URLs — a category page reads AMBIGUOUS forever. |
+| Reliance Digital | httpx + JSON-LD | Not yet verified against a live page. |
+
+All four browser checkers share **one** Chromium per pass (`checkers/browser.session`),
+not one launch per URL — with 9 URLs that is the difference between seconds and
+minutes. Worst case is ~450s per pass, inside the 600s interval, and the loop
+sleeps *after* a pass so runs cannot overlap.
+
+Delivery-signal trust is per-site, because reliability is per-site: Sony Center
+ships a hidden "this pin code is not serviceable!" node on every product page, so
+honouring it there would report permanent false sell-outs. Flipkart's equivalent
+message is real. Sites opt **out**, so an unaudited site errs toward "cannot buy"
+rather than over-promising.
 
 ### The pincode limitation — read this
 
@@ -191,18 +203,22 @@ tests/               logic tests, no network needed
 
 ## Troubleshooting a checker
 
-When a checker reports `could not determine stock`, run the diagnostic **from
-where the tracker runs** — these sites behave differently from a datacenter IP
-than from a laptop:
+An UNKNOWN result now **logs its own diagnostic automatically** — no shell
+access needed. Look for the `diagnostic |` line right under the failing check:
 
-```bash
-docker compose exec ps5-tracker python diagnose.py croma
-docker compose exec ps5-tracker python diagnose.py croma --save /data/croma.html
+```
+croma [141001] | ERROR (could not determine stock ...) | https://...
+  croma diagnostic | len=482913 | jsonld=none | title='...' | out_of_stock=["'sold out' -> ...context..."] | in_stock=[...]
 ```
 
-It prints the verdict, every schema.org value found, and each matching text
-signal *with surrounding context* — which is how you tell a real "Sold Out" from
-a JS template string like `default title - sold out`.
+Each hit carries surrounding context, which is how you tell a real "Sold Out"
+from a JS template string like `default title - sold out`.
+
+For deeper inspection with the full HTML, if you do have shell access:
+
+```bash
+docker compose exec ps5-tracker python diagnose.py croma --save /data/croma.html
+```
 
 If it reports `AMBIGUOUS: both kinds present`, the usual cause is a
 related-products carousel: other products' buttons on the same page. The fix is

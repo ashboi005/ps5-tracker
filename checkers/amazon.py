@@ -15,7 +15,7 @@ TIMEOUT_MS = 20_000
 OUT_OF_STOCK_SIGNALS = ("currently unavailable", "out of stock", "unavailable")
 
 
-async def check(url: str, pincode: str, client=None) -> CheckResult:
+async def check(url: str, pincode: str, client=None, session_obj=None) -> CheckResult:
     """Load an Amazon.in product page in Chromium and read its buybox."""
     try:
         from playwright.async_api import async_playwright

@@ -29,6 +29,11 @@ class CheckResult:
     # pincode unverified" result is never mistaken for a confirmed buy.
     pincode_verified: bool = False
 
+    # Populated when a check comes back UNKNOWN: what the parsers actually saw.
+    # Logged so an unclear page can be diagnosed from the deploy logs alone,
+    # without shell access to the container.
+    debug: str | None = None
+
     @property
     def ok(self) -> bool:
         return self.error is None
