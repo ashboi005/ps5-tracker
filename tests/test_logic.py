@@ -189,6 +189,20 @@ state_module.mark_heartbeat(st6, 5.0)
 check("product_entries excludes _meta", list(state_module.product_entries(st6)), ["https://x"])
 check("_meta survives save/load", "_meta" in st6, True)
 
+
+print("retry policy:")
+from checkers.http import MAX_ATTEMPTS, RETRY_STATUS, TIMEOUT, retry_delay
+
+check("timeout raised for datacenter IPs", TIMEOUT >= 20.0, True)
+check("429 is retried", 429 in RETRY_STATUS, True)
+check("403 is not retried (permanent block)", 403 in RETRY_STATUS, False)
+check("404 is not retried", 404 in RETRY_STATUS, False)
+check("honours Retry-After header", retry_delay(0, "7"), 7.0)
+check("caps an absurd Retry-After", retry_delay(0, "600"), 30.0)
+check("ignores unparsable Retry-After", 1.0 <= retry_delay(0, "soon") <= 2.0, True)
+check("backoff grows with attempts", retry_delay(2) > retry_delay(0), True)
+check("backoff is capped", retry_delay(20) <= 16.0, True)
+
 print("save/load round-trip:")
 tmp = TMP / "state_test.json"
 state_module.save({"u1": {"in_stock": True, "fail_count": 0, "broken_notified": False}}, tmp)

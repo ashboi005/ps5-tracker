@@ -188,3 +188,32 @@ checkers/            one module per retailer, isolated
 notifiers/           discord, telegram, email
 tests/               logic tests, no network needed
 ```
+
+## Troubleshooting a checker
+
+When a checker reports `could not determine stock`, run the diagnostic **from
+where the tracker runs** — these sites behave differently from a datacenter IP
+than from a laptop:
+
+```bash
+docker compose exec ps5-tracker python diagnose.py croma
+docker compose exec ps5-tracker python diagnose.py croma --save /data/croma.html
+```
+
+It prints the verdict, every schema.org value found, and each matching text
+signal *with surrounding context* — which is how you tell a real "Sold Out" from
+a JS template string like `default title - sold out`.
+
+If it reports `AMBIGUOUS: both kinds present`, the usual cause is a
+related-products carousel: other products' buttons on the same page. The fix is
+a scoped selector for that retailer, not another global signal.
+
+### Known site behaviour from a VPS
+
+| Symptom | Cause | Handling |
+|---|---|---|
+| `HTTP 429` (Sony Center) | Shopify rate-limits datacenter IPs | 3 attempts with backoff, honouring `Retry-After`. No page fallback on 429 — a second request would deepen the block. |
+| `timeout` (Flipkart) | Slow/tarpitted for datacenter IPs | Timeout raised to 25s (`HTTP_TIMEOUT_SECONDS`), 3 attempts. |
+| `403` | Permanent bot block | Not retried; that retailer needs the browser path. |
+| `resolved to www.amazon.com` | `a.co` short links point at the US store | Use `amazon.in` or `amzn.in` links. |
+

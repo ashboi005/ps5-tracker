@@ -12,7 +12,7 @@ import httpx
 
 from checkers.common import CheckResult, truncate
 from checkers.generic import page_check
-from checkers.http import HEADERS, TIMEOUT
+from checkers.http import request
 
 RETAILER = "sonycenter"
 
@@ -31,21 +31,25 @@ async def check(
     Falls back to the shared page check if the JSON endpoint is unavailable.
     """
     try:
-        if client is not None:
-            response = await client.get(
-                product_json_url(url), headers=HEADERS, timeout=TIMEOUT
-            )
-        else:
-            async with httpx.AsyncClient(follow_redirects=True) as owned:
-                response = await owned.get(
-                    product_json_url(url), headers=HEADERS, timeout=TIMEOUT
-                )
+        response = await request(product_json_url(url), client=client)
 
         if response.status_code != 200:
+            # Never fall back on a rate limit — a second request against a site
+            # already refusing us doubles the request rate and deepens the block.
+            if response.status_code == 429:
+                return CheckResult(
+                    retailer=RETAILER,
+                    url=url,
+                    error="HTTP 429 rate limited (retries exhausted)",
+                )
             return await page_check(RETAILER, url, client=client)
 
         data = response.json()
-    except (httpx.HTTPError, ValueError):
+    except httpx.HTTPError as exc:
+        return CheckResult(
+            retailer=RETAILER, url=url, error=f"request failed: {type(exc).__name__}"
+        )
+    except ValueError:
         return await page_check(RETAILER, url, client=client)
 
     variants = data.get("variants") or []

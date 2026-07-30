@@ -9,11 +9,21 @@ pincode-accurate). See README "Verifying a checker".
 
 from __future__ import annotations
 
+import asyncio
+import os
+import random
 import re
 
 import httpx
 
-TIMEOUT = 10.0
+# Datacenter IPs get throttled and tarpitted far more than home connections, so
+# a VPS needs a longer patience than a laptop. Flipkart timed out at 10s from
+# Coolify while working fine locally.
+TIMEOUT = float(os.getenv("HTTP_TIMEOUT_SECONDS") or 25.0)
+
+# Transient failures worth retrying: rate limits and upstream/proxy errors.
+RETRY_STATUS = {429, 500, 502, 503, 504}
+MAX_ATTEMPTS = int(os.getenv("HTTP_MAX_ATTEMPTS") or 3)
 
 # A full browser-like header set. Verified necessary: with a bare User-Agent,
 # Flipkart returns 403; with these it returns 200.
@@ -62,17 +72,59 @@ PRICE_RE = re.compile(r"(?:₹|Rs\.?\s?)\s?([\d,]{3,})")
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.S | re.I)
 
 
+def retry_delay(attempt: int, retry_after: str | None = None) -> float:
+    """Backoff before the next attempt, honouring Retry-After when given."""
+    if retry_after:
+        try:
+            # Cap it: some sites answer with minutes, and the whole pass has to
+            # finish well inside the check interval.
+            return min(float(retry_after), 30.0)
+        except ValueError:
+            pass
+    # Exponential, with jitter so repeated runs don't align into a thundering herd.
+    return min(2.0**attempt, 15.0) + random.uniform(0, 1.0)
+
+
+async def request(
+    url: str, client: httpx.AsyncClient | None = None
+) -> httpx.Response:
+    """GET with retries on transient failures. Returns the final response.
+
+    Non-retryable statuses (403, 404) come back as-is for the caller to read;
+    only rate limits and server errors are retried.
+    """
+    last_exc: Exception | None = None
+
+    for attempt in range(MAX_ATTEMPTS):
+        is_last = attempt == MAX_ATTEMPTS - 1
+        try:
+            if client is not None:
+                response = await client.get(url, headers=HEADERS, timeout=TIMEOUT)
+            else:
+                async with httpx.AsyncClient(follow_redirects=True) as owned:
+                    response = await owned.get(url, headers=HEADERS, timeout=TIMEOUT)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_exc = exc
+            if is_last:
+                break
+            await asyncio.sleep(retry_delay(attempt))
+            continue
+
+        if response.status_code in RETRY_STATUS and not is_last:
+            await asyncio.sleep(
+                retry_delay(attempt, response.headers.get("Retry-After"))
+            )
+            continue
+        return response
+
+    raise last_exc if last_exc else httpx.HTTPError("request failed")
+
+
 async def fetch(url: str, client: httpx.AsyncClient | None = None) -> str:
     """GET a page and return its text, following redirects."""
-    if client is not None:
-        response = await client.get(url, headers=HEADERS, timeout=TIMEOUT)
-        response.raise_for_status()
-        return response.text
-
-    async with httpx.AsyncClient(follow_redirects=True) as owned:
-        response = await owned.get(url, headers=HEADERS, timeout=TIMEOUT)
-        response.raise_for_status()
-        return response.text
+    response = await request(url, client=client)
+    response.raise_for_status()
+    return response.text
 
 
 def strip_tags(html: str) -> str:

@@ -22,7 +22,11 @@ class BrowserUnavailable(RuntimeError):
     """Playwright or its Chromium build is not installed."""
 
 
-async def render(url: str, wait_for: str | None = None) -> str:
+async def render(
+    url: str,
+    wait_for: str | None = None,
+    wait_until: str = "domcontentloaded",
+) -> str:
     """Load a page in headless Chromium and return its rendered HTML.
 
     Raises BrowserUnavailable if Playwright is missing, so callers can report a
@@ -41,7 +45,7 @@ async def render(url: str, wait_for: str | None = None) -> str:
         try:
             page = await browser.new_page(locale="en-IN", user_agent=USER_AGENT)
             page.set_default_timeout(TIMEOUT_MS)
-            await page.goto(url, wait_until="domcontentloaded")
+            await page.goto(url, wait_until=wait_until)
             if wait_for:
                 try:
                     await page.wait_for_selector(wait_for, timeout=TIMEOUT_MS)
@@ -53,11 +57,14 @@ async def render(url: str, wait_for: str | None = None) -> str:
 
 
 async def rendered_check(
-    retailer: str, url: str, wait_for: str | None = None
+    retailer: str,
+    url: str,
+    wait_for: str | None = None,
+    wait_until: str = "domcontentloaded",
 ) -> CheckResult:
     """Render a page, then read stock from it with the shared parsers."""
     try:
-        html = await render(url, wait_for=wait_for)
+        html = await render(url, wait_for=wait_for, wait_until=wait_until)
     except BrowserUnavailable as exc:
         return CheckResult(retailer=retailer, url=url, error=str(exc))
     except Exception as exc:  # noqa: BLE001 - any browser failure is a failed check

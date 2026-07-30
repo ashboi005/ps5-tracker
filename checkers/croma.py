@@ -16,5 +16,11 @@ WAIT_FOR = "script[type='application/ld+json'], .pdp-add-to-cart, #buyNow"
 
 
 async def check(url: str, pincode: str, client=None) -> CheckResult:
-    """Check one Croma product URL in a headless browser."""
-    return await rendered_check(RETAILER, url, wait_for=WAIT_FOR)
+    """Check one Croma product URL in a headless browser.
+
+    Waits for network idle: with domcontentloaded the JSON-LD had not been
+    injected yet, so checks reported "no schema.org markup".
+    """
+    return await rendered_check(
+        RETAILER, url, wait_for=WAIT_FOR, wait_until="networkidle"
+    )
