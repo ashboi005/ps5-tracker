@@ -16,6 +16,11 @@ STOCK_CHANNELS = (discord, telegram, email)
 # hit every inbox.
 BREAKAGE_CHANNELS = (telegram,)
 
+# Proof-of-life goes to Telegram only. It is routine by definition, and putting
+# it in email as well would train you to ignore the inbox that carries the
+# actual stock alerts.
+HEARTBEAT_CHANNELS = (telegram,)
+
 
 def broadcast(message: str, channels=STOCK_CHANNELS) -> None:
     """Send to every configured channel. One channel failing never blocks the rest."""

@@ -2,6 +2,7 @@
 
 import json
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -160,6 +161,64 @@ code = main.report(
 )
 check("dry-run exit 0", code, 0)
 check("dry-run left no state file", state_path.exists(), False)
+
+print("heartbeat wiring in report():")
+sent = []
+notifiers_mod = sys.modules["notifiers"]
+original_broadcast = notifiers_mod.broadcast
+
+
+def fake_broadcast(message, channels=notifiers_mod.STOCK_CHANNELS):
+    sent.append((message, channels))
+
+
+notifiers_mod.broadcast = fake_broadcast
+HB = state_module.HEARTBEAT_SECONDS
+cfg_hb = {"pincode": "143001", "pincode_overrides": {}, "retailers": {}}
+no_stock = CheckResult("flipkart", "https://x", in_stock=False, name="PS5")
+in_stock = CheckResult("flipkart", "https://y", in_stock=True, name="PS5")
+
+
+def run(results, seed_state):
+    """Run report() against a seeded state file and return messages sent."""
+    sent.clear()
+    state_module.save(seed_state, state_path)
+    main.report(results, cfg_hb, False)
+    return sent, state_module.load(state_path)
+
+
+# First ever run: starts the clock, says nothing.
+msgs, st = run([no_stock], {})
+check("first run sends nothing", msgs, [])
+check("first run starts the clock", "_meta" in st, True)
+
+# Still silent, but not yet 12h.
+recent = {"_meta": {"last_heartbeat": time.time() - (HB - 60)}}
+msgs, _ = run([no_stock], recent)
+check("silent but inside window -> nothing", msgs, [])
+
+# Silent for over 12h -> heartbeat, on Telegram only.
+stale = {"_meta": {"last_heartbeat": time.time() - (HB + 60)}}
+msgs, st = run([no_stock], stale)
+check("silent past window -> one heartbeat", len(msgs), 1)
+check("heartbeat says it is alive", "Tracker is alive" in msgs[0][0], True)
+check("heartbeat is telegram-only", msgs[0][1], notifiers_mod.HEARTBEAT_CHANNELS)
+check("heartbeat resets the clock", st["_meta"]["last_heartbeat"] > time.time() - 10, True)
+
+# In stock while a heartbeat is due: the stock alert wins, no heartbeat noise.
+msgs, st = run([in_stock], stale)
+check("stock alert fires", any("IN STOCK" in m for m, _ in msgs), True)
+check("stock alert suppresses heartbeat", len(msgs), 1)
+check("stock alert goes to all channels", msgs[0][1], notifiers_mod.STOCK_CHANNELS)
+check("stock alert also resets clock", st["_meta"]["last_heartbeat"] > time.time() - 10, True)
+
+# Heartbeat surfaces unreadable checks rather than calling them sold out.
+err = CheckResult("croma", "https://z", error="timeout")
+msgs, _ = run([no_stock, err], stale)
+check("heartbeat reports unknowns", "UNKNOWN, not confirmed sold out" in msgs[0][0], True)
+
+notifiers_mod.broadcast = original_broadcast
+state_path.unlink(missing_ok=True)
 
 print()
 print(f"{'FAILURES: ' + ', '.join(failures) if failures else 'ALL PASSED'}")

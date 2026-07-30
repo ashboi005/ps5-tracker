@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -147,6 +148,33 @@ def stock_message(result, pincode: str) -> str:
     )
 
 
+def heartbeat_message(results: list, config: dict) -> str:
+    """Periodic proof-of-life, listing why nothing has been worth alerting on."""
+    hours = state_module.HEARTBEAT_SECONDS // 3600
+    lines = [
+        f"💤 Still nothing in stock (last {hours}h). Tracker is alive.",
+        "",
+    ]
+    for result in sorted(results, key=lambda r: (r.retailer, r.url)):
+        if not result.ok:
+            status = f"unknown — {result.error}"
+        elif result.in_stock:
+            status = "IN STOCK"
+        else:
+            status = "no stock"
+        name = result.name or result.url
+        lines.append(f"• [{result.retailer}] {status} — {name}")
+
+    failures = sum(1 for r in results if not r.ok)
+    if failures:
+        lines += [
+            "",
+            f"⚠️ {failures} of {len(results)} checks could not be read — those are "
+            "UNKNOWN, not confirmed sold out.",
+        ]
+    return "\n".join(lines)
+
+
 def broken_message(result) -> str:
     return (
         "⚠️ Checker looks broken — treat this retailer as UNKNOWN, not sold out.\n"
@@ -182,6 +210,12 @@ def report(results: list, config: dict, dry_run: bool) -> int:
         if alert_broken:
             broken_alerts.append(result)
 
+    now = time.time()
+    state_module.ensure_heartbeat_clock(current, now)
+    # Any real alert is itself proof of life, so it resets the quiet timer.
+    sending_alerts = bool(stock_alerts or broken_alerts)
+    send_heartbeat = not sending_alerts and state_module.heartbeat_due(current, now)
+
     if dry_run:
         for result in stock_alerts:
             log.info(
@@ -190,10 +224,16 @@ def report(results: list, config: dict, dry_run: bool) -> int:
             )
         for result in broken_alerts:
             log.info("[dry-run] would send breakage alert:\n%s", broken_message(result))
+        if send_heartbeat:
+            log.info(
+                "[dry-run] would send heartbeat:\n%s", heartbeat_message(results, config)
+            )
         log.info(
-            "[dry-run] %d stock alert(s), %d breakage alert(s); state not written",
+            "[dry-run] %d stock alert(s), %d breakage alert(s), heartbeat=%s; "
+            "state not written",
             len(stock_alerts),
             len(broken_alerts),
+            send_heartbeat,
         )
         return 0
 
@@ -203,6 +243,13 @@ def report(results: list, config: dict, dry_run: bool) -> int:
         )
     for result in broken_alerts:
         notifiers.broadcast(broken_message(result), channels=notifiers.BREAKAGE_CHANNELS)
+
+    if send_heartbeat:
+        notifiers.broadcast(
+            heartbeat_message(results, config), channels=notifiers.HEARTBEAT_CHANNELS
+        )
+    if sending_alerts or send_heartbeat:
+        state_module.mark_heartbeat(current, now)
 
     state_module.save(current)
     failures = sum(1 for r in results if not r.ok)

@@ -159,6 +159,36 @@ st4 = {}
 state_module.apply(st4, r_err)
 check("error then in-stock alerts", state_module.apply(st4, r_in), (True, False))
 
+print("heartbeat (proof-of-life during silence):")
+HB = state_module.HEARTBEAT_SECONDS
+st5 = {}
+check("fresh state does not fire immediately", state_module.heartbeat_due(st5, 1000.0), False)
+
+state_module.ensure_heartbeat_clock(st5, 1000.0)
+check("clock starts on first run", state_module.heartbeat_due(st5, 1000.0), False)
+check("not due just before the window", state_module.heartbeat_due(st5, 1000.0 + HB - 1), False)
+check("due exactly at the window", state_module.heartbeat_due(st5, 1000.0 + HB), True)
+check("still due long after", state_module.heartbeat_due(st5, 1000.0 + HB * 3), True)
+
+state_module.mark_heartbeat(st5, 1000.0 + HB)
+check("sending resets the timer", state_module.heartbeat_due(st5, 1000.0 + HB), False)
+check("re-arms for the next window", state_module.heartbeat_due(st5, 1000.0 + HB * 2), True)
+
+check(
+    "ensure_heartbeat_clock does not clobber an existing time",
+    (
+        state_module.ensure_heartbeat_clock(st5, 9_999_999.0),
+        st5[state_module.META_KEY]["last_heartbeat"],
+    )[1],
+    1000.0 + HB,
+)
+
+print("_meta never leaks into product iteration:")
+st6 = {"https://x": {"in_stock": True, "fail_count": 0, "broken_notified": False}}
+state_module.mark_heartbeat(st6, 5.0)
+check("product_entries excludes _meta", list(state_module.product_entries(st6)), ["https://x"])
+check("_meta survives save/load", "_meta" in st6, True)
+
 print("save/load round-trip:")
 tmp = TMP / "state_test.json"
 state_module.save({"u1": {"in_stock": True, "fail_count": 0, "broken_notified": False}}, tmp)

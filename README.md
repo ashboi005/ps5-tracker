@@ -148,15 +148,33 @@ In Coolify:
 
 Locally: `docker compose up --build`.
 
-## Alerts
+## Alerts — when you actually get pinged
 
-- **Stock found** → Discord + Telegram + email. Fires only on a transition into
-  stock, so you are not paged every 30 minutes while stock holds.
-- **Checker broken** → Telegram only, once, after 3 consecutive failures
-  (~90 min blind). Deliberately separate from stock alerts so a broken scraper
-  is never mistaken for a confirmed sell-out. Resets when the checker recovers.
+**Nothing is sent while a PS5 stays out of stock.** Alerts fire on *transitions*,
+so a permanent sell-out produces zero messages regardless of how often it runs.
+That is why the interval can be 10 minutes without creating noise: a tighter
+interval costs HTTP requests, not notifications.
+
+| Event | Channels | Frequency |
+|---|---|---|
+| Stock appears | Discord + Telegram + email | Instantly, once per restock (not repeated while stock holds) |
+| Checker broken | Telegram | Once, after 3 consecutive failures (~30 min at a 10-min interval) |
+| Proof-of-life | Telegram | Only after `HEARTBEAT_SECONDS` (12h) of total silence |
+
+The heartbeat exists because a silent tracker and a dead tracker look identical.
+It lists every URL's current status, and any alert resets its timer — so you get
+it *only* during genuine quiet, at most twice a day. It is Telegram-only on
+purpose: routine traffic in the email inbox would train you to ignore the inbox
+that carries real stock alerts.
 
 A dead notification channel is logged and skipped; it never blocks the others.
+
+### Telegram gotcha
+
+A bot cannot message you until **you** message it first. If you see
+`400 Bad Request: chat not found`, open your bot in Telegram and send `/start`.
+Bot tokens are redacted from all log output (`notifiers/telegram.py`), since
+httpx otherwise embeds the token in exception text.
 
 ## Layout
 

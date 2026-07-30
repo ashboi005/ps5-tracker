@@ -6,7 +6,7 @@
 # to stdout. This keeps both working by default.
 set -uo pipefail
 
-INTERVAL="${CHECK_INTERVAL_SECONDS:-3600}"  # Default to 1 hour if not set.
+INTERVAL="${CHECK_INTERVAL_SECONDS:-600}"  # Default to 10 minutes if not set.
 
 # Exit promptly on stop/redeploy instead of waiting out the sleep.
 trap 'echo "[entrypoint] shutting down"; kill -- -$$ 2>/dev/null; exit 0' TERM INT
