@@ -1,0 +1,100 @@
+"""Verify state-transition and parsing logic without network deps installed."""
+
+import sys
+import types
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+TMP = Path(__file__).resolve().parent / "tmp"
+TMP.mkdir(exist_ok=True)
+sys.path.insert(0, str(ROOT))
+
+# Stub httpx so checkers.http imports; we only exercise pure parsing here.
+stub = types.ModuleType("httpx")
+for name in ("HTTPError", "TimeoutException"):
+    setattr(stub, name, type(name, (Exception,), {}))
+stub.HTTPStatusError = type("HTTPStatusError", (stub.HTTPError,), {})
+stub.AsyncClient = object
+sys.modules.setdefault("httpx", stub)
+
+import state as state_module
+from checkers.common import CheckResult, truncate
+from checkers.http import parse_name, parse_price, parse_stock
+
+failures = []
+
+
+def check(label, got, want):
+    if got == want:
+        print(f"  PASS  {label}")
+    else:
+        print(f"  FAIL  {label}: got {got!r}, want {want!r}")
+        failures.append(label)
+
+
+print("parse_stock:")
+check("add to cart -> in stock", parse_stock("<div>Add to Cart</div>"), True)
+check("sold out -> no stock", parse_stock("<div>Sold Out</div>"), False)
+check(
+    "out-of-stock beats add-to-cart",
+    parse_stock("<div>Add to Cart</div><span>Currently unavailable</span>"),
+    False,
+)
+check("no signal -> no stock", parse_stock("<div>hello</div>"), False)
+check("ignores script text", parse_stock("<script>add to cart</script><p>hi</p>"), False)
+
+print("parse_price / parse_name:")
+check("price", parse_price("<b>₹54,990</b>"), "₹54,990")
+check("price Rs form", parse_price("<b>Rs. 49,990</b>"), "₹49,990")
+check("no price", parse_price("<b>free</b>"), None)
+check("name", parse_name("<title>  PS5   Console </title>"), "PS5 Console")
+check("no title", parse_name("<div>x</div>"), None)
+check("truncate", truncate("a" * 200), "a" * 119 + "…")
+
+print("state transitions:")
+st = {}
+r_in = CheckResult("croma", "u1", in_stock=True)
+r_out = CheckResult("croma", "u1", in_stock=False)
+r_err = CheckResult("croma", "u1", error="timeout")
+
+check("first sighting alerts", state_module.apply(st, r_in), (True, False))
+check("still in stock -> no repeat alert", state_module.apply(st, r_in), (False, False))
+check("goes out of stock", state_module.apply(st, r_out), (False, False))
+check("restock alerts again", state_module.apply(st, r_in), (True, False))
+
+print("error handling:")
+st2 = {}
+check("fail 1 silent", state_module.apply(st2, r_err), (False, False))
+check("fail 2 silent", state_module.apply(st2, r_err), (False, False))
+check("fail 3 warns", state_module.apply(st2, r_err), (False, True))
+check("fail 4 stays quiet", state_module.apply(st2, r_err), (False, False))
+check("recovery resets", state_module.apply(st2, r_out), (False, False))
+check("re-breaks after recovery", state_module.apply(st2, r_err), (False, False))
+
+print("error must not fabricate stock state:")
+st3 = {}
+state_module.apply(st3, r_in)
+state_module.apply(st3, r_err)
+check("last-known stock preserved on error", st3["u1"]["in_stock"], True)
+check(
+    "error does not re-alert stock as new",
+    state_module.apply(st3, r_in),
+    (False, False),
+)
+
+st4 = {}
+state_module.apply(st4, r_err)
+check("error then in-stock alerts", state_module.apply(st4, r_in), (True, False))
+
+print("save/load round-trip:")
+tmp = TMP / "state_test.json"
+state_module.save({"u1": {"in_stock": True, "fail_count": 0, "broken_notified": False}}, tmp)
+check("round-trip", state_module.load(tmp)["u1"]["in_stock"], True)
+check("missing file -> empty", state_module.load(tmp.with_name("nope.json")), {})
+tmp.write_text("{not json")
+check("corrupt file -> empty", state_module.load(tmp), {})
+tmp.unlink(missing_ok=True)
+
+print()
+print(f"{'FAILURES: ' + ', '.join(failures) if failures else 'ALL PASSED'}")
+sys.exit(1 if failures else 0)
