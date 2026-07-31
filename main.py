@@ -253,11 +253,16 @@ def heartbeat_message(results: list, config: dict) -> str:
         if not result.ok:
             status = f"unknown — {result.error}"
         elif result.in_stock:
-            status = "IN STOCK"
+            status = (
+                "IN STOCK, deliverable"
+                if result.pincode_verified
+                else "in stock nationally (delivery to you unverified)"
+            )
         else:
             status = "no stock"
         name = result.name or result.url
-        lines.append(f"• [{result.retailer}] {status} — {name}")
+        pin = f" @{result.pincode}" if result.pincode else ""
+        lines.append(f"• [{result.retailer}{pin}] {status} — {name}")
 
     failures = sum(1 for r in results if not r.ok)
     if failures:
@@ -287,7 +292,13 @@ def report(results: list, config: dict, dry_run: bool) -> int:
         if not result.ok:
             status = f"ERROR ({result.error})"
         elif result.in_stock:
-            status = "IN STOCK" if result.pincode_verified else "IN STOCK (national)"
+            status = (
+                "IN STOCK (deliverable)"
+                if result.pincode_verified
+                # Says "in stock" on the site, but nothing confirms it can reach
+                # your pincode — Croma shows exactly this. Never alerted on.
+                else "in stock nationally / DELIVERY UNVERIFIED - not alerting"
+            )
         else:
             status = "no stock"
         log.info(

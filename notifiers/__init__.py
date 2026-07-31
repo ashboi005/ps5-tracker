@@ -14,12 +14,13 @@ STOCK_CHANNELS = (discord, telegram, email)
 
 # Checker-broken alerts go to one channel only, so maintenance noise does not
 # hit every inbox.
-BREAKAGE_CHANNELS = (telegram,)
+BREAKAGE_CHANNELS = STOCK_CHANNELS
 
-# Proof-of-life goes to Telegram only. It is routine by definition, and putting
-# it in email as well would train you to ignore the inbox that carries the
-# actual stock alerts.
-HEARTBEAT_CHANNELS = (telegram,)
+# Proof-of-life goes everywhere too. It was Telegram-only at first, on the theory
+# that routine traffic in the inbox trains you to ignore it — but a heartbeat you
+# only see on one channel cannot tell you that channel has broken, which is half
+# of what it is for.
+HEARTBEAT_CHANNELS = STOCK_CHANNELS
 
 
 def broadcast(message: str, channels=STOCK_CHANNELS) -> None:
