@@ -27,3 +27,8 @@ HTTP_CHECKERS = {
 }
 
 ALL_CHECKERS = {**HTTP_CHECKERS, **BROWSER_CHECKERS}
+
+# Retailers whose checker genuinely applies a pincode and reads the resulting
+# serviceability verdict. Only these are worth checking at multiple pincodes;
+# for the others every pincode would return the same national answer.
+PINCODE_AWARE = {"flipkart"}

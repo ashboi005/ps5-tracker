@@ -65,6 +65,13 @@ META_KEY = "_meta"
 HEARTBEAT_SECONDS = int(os.getenv("HEARTBEAT_SECONDS") or 12 * 60 * 60)
 
 
+def key_for(result) -> str:
+    """State key for a result. Includes the pincode: one URL may be tracked at
+    several pincodes, and each needs its own transition history."""
+    pincode = getattr(result, "pincode", "") or ""
+    return f"{result.url}@{pincode}" if pincode else result.url
+
+
 def entry(state: dict, url: str) -> dict:
     return state.get(url, {"in_stock": False, "fail_count": 0, "broken_notified": False})
 
@@ -99,13 +106,14 @@ def apply(state: dict, result) -> tuple[bool, bool]:
       alert_stock  - stock newly appeared (not-in-stock/unknown -> in-stock)
       alert_broken - this checker just crossed FAIL_THRESHOLD for the first time
     """
-    previous = entry(state, result.url)
+    key = key_for(result)
+    previous = entry(state, key)
 
     if not result.ok:
         fail_count = previous["fail_count"] + 1
         already_warned = previous["broken_notified"]
         alert_broken = fail_count >= FAIL_THRESHOLD and not already_warned
-        state[result.url] = {
+        state[key] = {
             # Preserve last known stock state; a failed check tells us nothing new.
             "in_stock": previous["in_stock"],
             "fail_count": fail_count,
@@ -114,7 +122,7 @@ def apply(state: dict, result) -> tuple[bool, bool]:
         return False, alert_broken
 
     alert_stock = result.in_stock and not previous["in_stock"]
-    state[result.url] = {
+    state[key] = {
         "in_stock": result.in_stock,
         "fail_count": 0,
         "broken_notified": False,

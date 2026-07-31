@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 
 import notifiers
 import state as state_module
-from checkers import ALL_CHECKERS, BROWSER_CHECKERS, HTTP_CHECKERS
+from checkers import ALL_CHECKERS, BROWSER_CHECKERS, HTTP_CHECKERS, PINCODE_AWARE
 from checkers import http as http_module
 from checkers.common import CheckResult
 
@@ -54,9 +54,9 @@ def load_config() -> dict:
     except json.JSONDecodeError as exc:
         raise SystemExit(f"{CONFIG_PATH.name} is not valid JSON: {exc}") from exc
 
-    pincode = str(config.get("pincode", "")).strip()
-    if not pincode:
-        raise SystemExit(f"set 'pincode' in {CONFIG_PATH.name}")
+    pincodes = normalise_pincodes(config.get("pincodes") or config.get("pincode"))
+    if not pincodes:
+        raise SystemExit(f"set 'pincodes' (or 'pincode') in {CONFIG_PATH.name}")
 
     retailers = config.get("retailers") or {}
     unknown = set(retailers) - set(ALL_CHECKERS)
@@ -80,26 +80,61 @@ def load_config() -> dict:
             f"{', '.join(sorted(unknown_overrides))}"
         )
     overrides = {
-        retailer: str(value).strip()
+        retailer: normalise_pincodes(value)
         for retailer, value in overrides.items()
-        if str(value).strip()
+        if normalise_pincodes(value)
     }
 
     return {
-        "pincode": pincode,
+        "pincodes": pincodes,
         "retailers": retailers,
         "pincode_overrides": overrides,
         "disabled": set(disabled),
+        "alert_without_pincode_check": set(
+            config.get("alert_without_pincode_check") or []
+        ),
     }
 
 
+def normalise_pincodes(value) -> list[str]:
+    """Accept a single pincode or a list, and return a de-duplicated list."""
+    if value is None:
+        return []
+    if isinstance(value, (str, int)):
+        value = [value]
+    seen, out = set(), []
+    for item in value:
+        pin = str(item).strip()
+        if pin and pin not in seen:
+            seen.add(pin)
+            out.append(pin)
+    return out
+
+
+def pincodes_for(config: dict, retailer: str) -> list[str]:
+    """Pincodes to check for a retailer — its override if set, else the defaults.
+
+    Only pincode-aware retailers are checked at more than one: for the others
+    every pincode yields the same national answer, so extra passes are waste.
+    """
+    pins = config["pincode_overrides"].get(retailer) or config["pincodes"]
+    if retailer in PINCODE_AWARE:
+        return pins
+    return pins[:1]
+
+
 def pincode_for(config: dict, retailer: str) -> str:
-    """Pincode to use for a retailer — its override if set, else the default."""
-    return config["pincode_overrides"].get(retailer, config["pincode"])
+    """Primary pincode for a retailer, for display and logging."""
+    return pincodes_for(config, retailer)[0]
 
 
 def targets(config: dict, only: str | None) -> tuple[list, list]:
-    """Split configured (retailer, url) pairs into http-based and browser-based."""
+    """Build (retailer, url, pincode) triples, split by transport.
+
+    Browser targets come out grouped by (retailer, pincode) so that per-pincode
+    site state — Flipkart's delivery location — is primed once and then reused
+    across that pincode's URLs, instead of being rebuilt per URL.
+    """
     http_targets, browser_targets = [], []
     disabled = config.get("disabled") or set()
     for retailer, urls in config["retailers"].items():
@@ -114,8 +149,18 @@ def targets(config: dict, only: str | None) -> tuple[list, list]:
             if not isinstance(url, str) or not url.strip():
                 continue
             bucket = browser_targets if retailer in BROWSER_CHECKERS else http_targets
-            bucket.append((retailer, url.strip()))
+            for pincode in pincodes_for(config, retailer):
+                bucket.append((retailer, url.strip(), pincode))
+
+    browser_targets.sort(key=lambda item: (item[0], item[2]))
     return http_targets, browser_targets
+
+
+async def stamped(coro, pincode: str):
+    """Record which pincode a check was made for, for state keys and messages."""
+    result = await coro
+    result.pincode = pincode
+    return result
 
 
 async def run_checks(config: dict, only: str | None) -> list:
@@ -130,10 +175,11 @@ async def run_checks(config: dict, only: str | None) -> list:
             results.extend(
                 await asyncio.gather(
                     *(
-                        HTTP_CHECKERS[retailer].check(
-                            url, pincode_for(config, retailer), client=client
+                        stamped(
+                            HTTP_CHECKERS[retailer].check(url, pincode, client=client),
+                            pincode,
                         )
-                        for retailer, url in http_targets
+                        for retailer, url, pincode in http_targets
                     )
                 )
             )
@@ -149,15 +195,15 @@ async def run_checks(config: dict, only: str | None) -> list:
             Both transports are passed: the hybrid checkers try HTTP first and
             only reach for the browser when blocked.
             """
-            for retailer, url in browser_targets:
-                results.append(
-                    await BROWSER_CHECKERS[retailer].check(
-                        url,
-                        pincode_for(config, retailer),
-                        client=client,
-                        session_obj=active,
-                    )
+            for retailer, url, pincode in browser_targets:
+                result = await BROWSER_CHECKERS[retailer].check(
+                    url,
+                    pincode,
+                    client=client,
+                    session_obj=active,
                 )
+                result.pincode = pincode
+                results.append(result)
 
         try:
             # One browser for the whole pass, reused across every URL. Launching
@@ -247,7 +293,7 @@ def report(results: list, config: dict, dry_run: bool) -> int:
         log.info(
             "%s [%s] | %s | %s",
             result.retailer,
-            pincode_for(config, result.retailer),
+            result.pincode or pincode_for(config, result.retailer),
             status,
             result.url,
         )
@@ -268,7 +314,7 @@ def report(results: list, config: dict, dry_run: bool) -> int:
                 "  not alerting: %s has national stock but delivery to %s is "
                 "unverified",
                 result.retailer,
-                pincode_for(config, result.retailer),
+                result.pincode or pincode_for(config, result.retailer),
             )
             gated = replace(result, in_stock=False)
 
@@ -288,7 +334,7 @@ def report(results: list, config: dict, dry_run: bool) -> int:
         for result in stock_alerts:
             log.info(
                 "[dry-run] would send stock alert:\n%s",
-                stock_message(result, pincode_for(config, result.retailer)),
+                stock_message(result, result.pincode or pincode_for(config, result.retailer)),
             )
         for result in broken_alerts:
             log.info("[dry-run] would send breakage alert:\n%s", broken_message(result))
@@ -307,7 +353,7 @@ def report(results: list, config: dict, dry_run: bool) -> int:
 
     for result in stock_alerts:
         notifiers.broadcast(
-            stock_message(result, pincode_for(config, result.retailer))
+            stock_message(result, result.pincode or pincode_for(config, result.retailer))
         )
     for result in broken_alerts:
         notifiers.broadcast(broken_message(result), channels=notifiers.BREAKAGE_CHANNELS)

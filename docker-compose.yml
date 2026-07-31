@@ -3,9 +3,10 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      # Every 10 minutes. Cheap: alerts fire on transitions only, so a
-      # tighter interval costs requests, not notifications.
-      CHECK_INTERVAL_SECONDS: 600
+      # Every 15 minutes. A full pass takes ~3.5 min (18 Flipkart checks across
+      # 6 pincodes, each primed through the site UI, plus Croma in Firefox), so
+      # 10 min left too little headroom.
+      CHECK_INTERVAL_SECONDS: 900
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}

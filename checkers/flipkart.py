@@ -45,7 +45,6 @@ from checkers.http import (
 )
 
 RETAILER = "flipkart"
-CONTEXT_KEY = "flipkart"
 
 WAIT_FOR = "script[type='application/ld+json'], button"
 
@@ -65,15 +64,41 @@ LOCATION_UNSET = "location not set"
 
 log = logging.getLogger("ps5")
 
+# Whether priming succeeded, per pincode, for the current pass. Keyed by pincode
+# because each has its own browser context.
+_applied_pins: dict[str, bool] = {}
 
-async def prime_pincode(page, url: str, pincode: str) -> bool:
-    """Set the delivery pincode on a fresh context. True if it took effect."""
+
+async def prime_pincode(page, url: str, pincode: str, attempts: int = 2) -> bool:
+    """Set the delivery pincode, retrying once. True if it took effect.
+
+    The typeahead is timing-sensitive — in a 6-pincode run two of six failed on
+    the first try — so a failed attempt is retried before giving up.
+    """
+    for attempt in range(attempts):
+        if await _try_prime(page, url, pincode):
+            return True
+        if attempt < attempts - 1:
+            log.info("flipkart: pincode %s did not take, retrying", pincode)
+            await page.wait_for_timeout(2000)
+    return False
+
+
+async def _try_prime(page, url: str, pincode: str) -> bool:
+    """One attempt at setting the delivery pincode."""
     await page.goto(url, wait_until="domcontentloaded")
     await settle(page, WAIT_FOR, "networkidle")
 
-    try:
-        await page.locator(OPEN_WIDGET).first.click(timeout=SETTLE_MS)
-    except Exception:  # noqa: BLE001 - widget missing or renamed
+    # Once a location is set, the widget is labelled with the address instead.
+    for opener in (OPEN_WIDGET, "text=Deliver To", "text=Change"):
+        try:
+            target = page.locator(opener).first
+            if await target.count():
+                await target.click(timeout=SETTLE_MS)
+                break
+        except Exception:  # noqa: BLE001 - try the next label
+            continue
+    else:
         return False
 
     await page.wait_for_timeout(1500)
@@ -83,9 +108,11 @@ async def prime_pincode(page, url: str, pincode: str) -> bool:
         return False
 
     # The typeahead needs a moment, and its suggestion must be clicked.
-    await page.wait_for_timeout(3000)
+    await page.wait_for_timeout(4000)
     suggestion = page.locator(f"text={pincode}").first
-    if not await suggestion.count():
+    try:
+        await suggestion.wait_for(state="visible", timeout=SETTLE_MS)
+    except Exception:  # noqa: BLE001 - no suggestion appeared
         return False
     with contextlib.suppress(Exception):
         await suggestion.click(timeout=SETTLE_MS)
@@ -153,7 +180,12 @@ async def check(
         return await page_check(RETAILER, url, client=client)
 
     try:
-        context, created = await session_obj.keyed_context(CONTEXT_KEY)
+        # One primed context per pincode: the delivery location is context
+        # state, so pincodes must not share it. Only the active one is kept —
+        # holding six open at once exhausted the container.
+        key = f"flipkart:{pincode}"
+        await session_obj.close_contexts("flipkart:", keep=key)
+        context, created = await session_obj.keyed_context(key)
         page = await context.new_page()
         page.set_default_timeout(TIMEOUT_MS)
         try:
@@ -165,10 +197,10 @@ async def check(
                         "national-only and will not raise alerts",
                         pincode,
                     )
-                # Remember it so later URLs in this pass agree.
-                session_obj.flipkart_pincode_applied = applied  # type: ignore[attr-defined]
+                # Remember per pincode, so later URLs in this pass agree.
+                _applied_pins[pincode] = applied
             else:
-                applied = getattr(session_obj, "flipkart_pincode_applied", False)
+                applied = _applied_pins.get(pincode, False)
 
             await page.goto(url, wait_until="domcontentloaded")
             await settle(page, WAIT_FOR, "networkidle")

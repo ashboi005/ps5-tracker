@@ -41,21 +41,43 @@ class BrowserUnavailable(RuntimeError):
 
 
 class Session:
-    """A live browser, reused for many page loads within one pass."""
+    """Live browsers, reused for many page loads within one pass.
 
-    def __init__(self, browser) -> None:
-        self._browser = browser
+    Engines are launched lazily and cached, because they are not
+    interchangeable: Croma serves Chromium a 351-byte "Access Denied" while
+    returning the real 614KB page to Firefox and WebKit. The block is at the
+    TLS/HTTP2 layer, so the engine choice — not the user agent — is what matters.
+    """
+
+    def __init__(self, playwright) -> None:
+        self._playwright = playwright
+        self._browsers: dict[str, object] = {}
         self._contexts: dict[str, object] = {}
 
-    async def _new_context(self):
-        return await self._browser.new_context(
+    async def browser(self, engine: str = "chromium"):
+        cached = self._browsers.get(engine)
+        if cached is not None:
+            return cached
+        launcher = getattr(self._playwright, engine)
+        kwargs: dict = {}
+        if engine == "chromium":
+            kwargs["args"] = ["--no-sandbox"]
+        if PROXY_URL:
+            kwargs["proxy"] = {"server": PROXY_URL}
+        browser = await launcher.launch(**kwargs)
+        self._browsers[engine] = browser
+        return browser
+
+    async def _new_context(self, engine: str = "chromium"):
+        browser = await self.browser(engine)
+        return await browser.new_context(
             locale="en-IN",
             user_agent=USER_AGENT,
             viewport={"width": 1440, "height": 900},
             timezone_id="Asia/Kolkata",
         )
 
-    async def keyed_context(self, key: str):
+    async def keyed_context(self, key: str, engine: str = "chromium"):
         """A context that persists across URLs, keyed by retailer.
 
         Needed where site state must be established once and then reused —
@@ -66,25 +88,43 @@ class Session:
         existing = self._contexts.get(key)
         if existing is not None:
             return existing, False
-        context = await self._new_context()
+        context = await self._new_context(engine)
         self._contexts[key] = context
         return context, True
+
+    async def close_contexts(self, prefix: str, keep: str | None = None) -> None:
+        """Close cached contexts under `prefix`, optionally keeping one.
+
+        Holding many browser contexts open at once exhausted the container:
+        six concurrent Chromium contexts produced ERR_NAME_NOT_RESOLVED and
+        navigation timeouts. Callers that iterate over primed contexts (one per
+        pincode) use this to keep only the active one alive.
+        """
+        for key in [k for k in self._contexts if k.startswith(prefix) and k != keep]:
+            with contextlib.suppress(Exception):
+                await self._contexts[key].close()
+            del self._contexts[key]
 
     async def close(self) -> None:
         for context in self._contexts.values():
             with contextlib.suppress(Exception):
                 await context.close()
         self._contexts.clear()
+        for browser in self._browsers.values():
+            with contextlib.suppress(Exception):
+                await browser.close()
+        self._browsers.clear()
 
     async def render(
         self,
         url: str,
         wait_for: str | None = None,
         wait_until: str = "domcontentloaded",
+        engine: str = "chromium",
     ) -> str:
         # A fresh context per page keeps cookies from one retailer out of the
         # next, while still avoiding a full browser relaunch.
-        context = await self._new_context()
+        context = await self._new_context(engine)
         try:
             page = await context.new_page()
             page.set_default_timeout(TIMEOUT_MS)
@@ -123,16 +163,11 @@ async def session():
         ) from exc
 
     async with async_playwright() as playwright:
-        launch_kwargs = {"args": ["--no-sandbox"]}
-        if PROXY_URL:
-            launch_kwargs["proxy"] = {"server": PROXY_URL}
-        browser = await playwright.chromium.launch(**launch_kwargs)
-        active = Session(browser)
+        active = Session(playwright)
         try:
             yield active
         finally:
             await active.close()
-            await browser.close()
 
 
 async def settle(page, wait_for: str | None, wait_until: str) -> None:
@@ -149,10 +184,13 @@ async def render(
     url: str,
     wait_for: str | None = None,
     wait_until: str = "domcontentloaded",
+    engine: str = "chromium",
 ) -> str:
     """One-shot render, for tools that check a single page."""
     async with session() as active:
-        return await active.render(url, wait_for=wait_for, wait_until=wait_until)
+        return await active.render(
+            url, wait_for=wait_for, wait_until=wait_until, engine=engine
+        )
 
 
 async def rendered_check(
@@ -162,15 +200,18 @@ async def rendered_check(
     wait_until: str = "domcontentloaded",
     delivery_signals: bool = True,
     session_obj: Session | None = None,
+    engine: str = "chromium",
 ) -> CheckResult:
     """Render a page, then read stock from it with the shared parsers."""
     try:
         if session_obj is not None:
             html = await session_obj.render(
-                url, wait_for=wait_for, wait_until=wait_until
+                url, wait_for=wait_for, wait_until=wait_until, engine=engine
             )
         else:
-            html = await render(url, wait_for=wait_for, wait_until=wait_until)
+            html = await render(
+                url, wait_for=wait_for, wait_until=wait_until, engine=engine
+            )
     except BrowserUnavailable as exc:
         return CheckResult(retailer=retailer, url=url, error=str(exc))
     except Exception as exc:  # noqa: BLE001 - any browser failure is a failed check

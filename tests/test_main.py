@@ -58,7 +58,7 @@ def with_config(data):
 
 print("config validation:")
 with_config({"pincode": "143001", "retailers": {"croma": ["https://x"]}})
-check("valid config", main.load_config()["pincode"], "143001")
+check("valid config", main.load_config()["pincodes"], ["143001"])
 
 with_config("{bad json")
 expect_exit("invalid JSON", main.load_config)
@@ -69,13 +69,13 @@ expect_exit("missing pincode", main.load_config)
 with_config({"pincode": "143001", "retailers": {"blinkit": []}})
 expect_exit("unknown retailer", main.load_config)
 
-with_config({"pincode": 143001, "retailers": {}})
-check("numeric pincode coerced", main.load_config()["pincode"], "143001")
+with_config({"pincodes": [143001], "retailers": {}})
+check("numeric pincode coerced", main.load_config()["pincodes"], ["143001"])
 
 print("per-retailer pincode overrides:")
 with_config(
     {
-        "pincode": "143001",
+        "pincodes": ["143001"],
         "pincode_overrides": {"croma": "141001"},
         "retailers": {"croma": ["https://c"], "flipkart": ["https://f"]},
     }
@@ -84,40 +84,79 @@ cfg_ov = main.load_config()
 check("override applies to croma", main.pincode_for(cfg_ov, "croma"), "141001")
 check("default applies elsewhere", main.pincode_for(cfg_ov, "flipkart"), "143001")
 
-with_config({"pincode": "143001", "retailers": {}})
+print("multiple pincodes:")
+with_config({
+    "pincodes": ["143001", "110001", "122001"],
+    "retailers": {"flipkart": ["https://f"], "amazon": ["https://a"]},
+})
+cfg_mp = main.load_config()
+check("all pincodes parsed", cfg_mp["pincodes"], ["143001", "110001", "122001"])
+check(
+    "pincode-aware retailer checks every pincode",
+    main.pincodes_for(cfg_mp, "flipkart"),
+    ["143001", "110001", "122001"],
+)
+check(
+    "non-aware retailer checks only the first (rest would repeat)",
+    main.pincodes_for(cfg_mp, "amazon"),
+    ["143001"],
+)
+h, b = main.targets(cfg_mp, None)
+check("flipkart fans out to 3 targets", len([1 for r, _, _ in b if r == "flipkart"]), 3)
+check("amazon stays at 1 target", len([1 for r, _, _ in b if r == "amazon"]), 1)
+check(
+    "each flipkart target has a distinct pincode",
+    sorted(p for r, _, p in b if r == "flipkart"),
+    ["110001", "122001", "143001"],
+)
+check("duplicates removed", main.normalise_pincodes(["1", "1", " 1 ", "2"]), ["1", "2"])
+check("single string accepted", main.normalise_pincodes("143001"), ["143001"])
+check("int accepted", main.normalise_pincodes(143001), ["143001"])
+
+print("per-pincode state keys:")
+import state as st_mod
+a = CheckResult("flipkart", "https://x", pincode="143001", in_stock=True, pincode_verified=True)
+bb = CheckResult("flipkart", "https://x", pincode="110001", in_stock=True, pincode_verified=True)
+stt = {}
+check("same URL, pincode A alerts", st_mod.apply(stt, a), (True, False))
+check("same URL, pincode B alerts independently", st_mod.apply(stt, bb), (True, False))
+check("two separate state keys", len(st_mod.product_entries(stt)), 2)
+check("A does not re-alert", st_mod.apply(stt, a), (False, False))
+
+with_config({"pincodes": ["143001"], "retailers": {}})
 check("no overrides key is fine", main.pincode_for(main.load_config(), "croma"), "143001")
 
-with_config({"pincode": "143001", "pincode_overrides": {"croma": "  "}, "retailers": {}})
+with_config({"pincodes": ["143001"], "pincode_overrides": {"croma": "  "}, "retailers": {}})
 check(
     "blank override falls back",
     main.pincode_for(main.load_config(), "croma"),
     "143001",
 )
 
-with_config({"pincode": "143001", "pincode_overrides": {"blinkit": "1"}, "retailers": {}})
+with_config({"pincodes": ["143001"], "pincode_overrides": {"blinkit": "1"}, "retailers": {}})
 expect_exit("unknown retailer in overrides", main.load_config)
 
 print("disabled retailers:")
 with_config({
-    "pincode": "143001",
+    "pincodes": ["143001"],
     "disabled": ["croma"],
     "retailers": {"croma": ["https://c1", "https://c2"], "vijaysales": ["https://v"]},
 })
 cfg_dis = main.load_config()
 check("disabled parsed", cfg_dis["disabled"], {"croma"})
 h, b = main.targets(cfg_dis, None)
-check("disabled retailer not checked", [r for r, _ in h + b], ["vijaysales"])
+check("disabled retailer not checked", [r for r, _, _ in h + b], ["vijaysales"])
 check("its URLs are kept in config", len(cfg_dis["retailers"]["croma"]), 2)
 h, b = main.targets(cfg_dis, "croma")
 check("--check cannot re-enable a disabled retailer", h + b, [])
 
-with_config({"pincode": "1", "disabled": "croma", "retailers": {}})
+with_config({"pincodes": ["1"], "disabled": "croma", "retailers": {}})
 check("bare string accepted", main.load_config()["disabled"], {"croma"})
 
-with_config({"pincode": "1", "disabled": ["blinkit"], "retailers": {}})
+with_config({"pincodes": ["1"], "disabled": ["blinkit"], "retailers": {}})
 expect_exit("unknown retailer in disabled", main.load_config)
 
-with_config({"pincode": "1", "retailers": {}})
+with_config({"pincodes": ["1"], "retailers": {}})
 check("no disabled key is fine", main.load_config()["disabled"], set())
 
 print("target splitting:")
@@ -129,7 +168,8 @@ A_BROWSER = sorted(BROWSER_CHECKERS)[0]
 AN_HTTP = sorted(HTTP_CHECKERS)[0]
 
 cfg = {
-    "pincode": "143001",
+    "pincodes": ["143001"],
+    "pincode_overrides": {},
     "retailers": {
         AN_HTTP: ["https://h/a", "  ", "https://h/b"],
         A_BROWSER: ["https://b/a"],
@@ -137,9 +177,9 @@ cfg = {
 }
 http_t, browser_t = main.targets(cfg, None)
 check("http targets skip blanks", len(http_t), 2)
-check("http targets are the httpx sites", [r for r, _ in http_t], [AN_HTTP, AN_HTTP])
-check("browser site routed to browser", browser_t, [(A_BROWSER, "https://b/a")])
-check("no overlap between the two buckets", set(r for r, _ in http_t) & set(r for r, _ in browser_t), set())
+check("http targets are the httpx sites", [r for r, _, _ in http_t], [AN_HTTP, AN_HTTP])
+check("browser site routed to browser", browser_t, [(A_BROWSER, "https://b/a", "143001")])
+check("no overlap between the two buckets", set(r for r, _, _ in http_t) & set(r for r, _, _ in browser_t), set())
 
 http_t, browser_t = main.targets(cfg, AN_HTTP)
 check(f"--check {AN_HTTP} filters http", len(http_t), 2)
@@ -150,8 +190,11 @@ check(f"--check {A_BROWSER} routes to browser only", (len(http_t), len(browser_t
 
 check(
     "non-string url ignored",
-    main.targets({"pincode": "1", "retailers": {AN_HTTP: [None, 42, "https://ok"]}}, None)[0],
-    [(AN_HTTP, "https://ok")],
+    main.targets(
+        {"pincodes": ["1"], "pincode_overrides": {}, "retailers": {AN_HTTP: [None, 42, "https://ok"]}},
+        None,
+    )[0],
+    [(AN_HTTP, "https://ok", "1")],
 )
 check(
     "every configured retailer is routed somewhere",
@@ -182,7 +225,7 @@ state_path.unlink(missing_ok=True)
 import state as state_module
 
 state_module.STATE_PATH = state_path
-cfg_report = {"pincode": "143001", "pincode_overrides": {}, "retailers": {}}
+cfg_report = {"pincodes": ["143001"], "pincode_overrides": {}, "retailers": {}}
 code = main.report(
     [CheckResult("croma", "https://x", in_stock=True, name="PS5")], cfg_report, True
 )
@@ -201,7 +244,7 @@ def fake_broadcast(message, channels=notifiers_mod.STOCK_CHANNELS):
 
 notifiers_mod.broadcast = fake_broadcast
 HB = state_module.HEARTBEAT_SECONDS
-cfg_hb = {"pincode": "143001", "pincode_overrides": {}, "retailers": {}}
+cfg_hb = {"pincodes": ["143001"], "pincode_overrides": {}, "retailers": {}}
 no_stock = CheckResult("flipkart", "https://x", in_stock=False, name="PS5")
 in_stock = CheckResult(
     "flipkart", "https://y", in_stock=True, name="PS5", pincode_verified=True

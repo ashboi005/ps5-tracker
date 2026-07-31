@@ -1,8 +1,5 @@
 {
-  "pincode": "143001",
-  "pincode_overrides": {
-    "croma": "141001"
-  },
+  "pincode_overrides": {},
   "retailers": {
     "amazon": [
       "https://amzn.in/d/06nZ16cx"
@@ -26,7 +23,13 @@
       "https://www.vijaysales.com/p/259648/sony-playstationr5-sa-e-disc-edition-gaming-console-ps5r-slim"
     ]
   },
-  "disabled": [
-    "croma"
+  "disabled": [],
+  "pincodes": [
+    "143001",
+    "141001",
+    "144001",
+    "110001",
+    "122001",
+    "201301"
   ]
 }

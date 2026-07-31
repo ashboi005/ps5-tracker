@@ -17,6 +17,9 @@ class CheckResult:
 
     retailer: str
     url: str
+    # Which pincode this check was made for. Part of the state key, so the same
+    # URL tracked at several pincodes alerts independently.
+    pincode: str = ""
     in_stock: bool = False
     price: str | None = None
     name: str | None = None
