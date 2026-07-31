@@ -136,11 +136,18 @@ async def fetch(url: str, client: httpx.AsyncClient | None = None) -> str:
 
 
 def strip_tags(html: str) -> str:
-    """Crude tag strip — enough to search visible text for stock signals."""
+    """Crude tag strip — enough to search visible text for stock signals.
+
+    Whitespace is collapsed afterwards, and that matters: each removed tag leaves
+    a space behind, so `<span>Not Available</span> for your pincode` became
+    "Not Available  for your pincode" with two spaces and never matched the
+    phrase being searched for. Croma was reported deliverable at every pincode
+    because of it.
+    """
     without_scripts = re.sub(
         r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I
     )
-    return re.sub(r"<[^>]+>", " ", without_scripts)
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", without_scripts))
 
 
 # schema.org availability values, as they appear in JSON-LD product markup.

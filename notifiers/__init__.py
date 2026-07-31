@@ -12,15 +12,11 @@ log = logging.getLogger(__name__)
 # Stock alerts go everywhere.
 STOCK_CHANNELS = (discord, telegram, email)
 
-# Checker-broken alerts go to one channel only, so maintenance noise does not
-# hit every inbox.
-BREAKAGE_CHANNELS = STOCK_CHANNELS
-
-# Proof-of-life goes everywhere too. It was Telegram-only at first, on the theory
-# that routine traffic in the inbox trains you to ignore it — but a heartbeat you
-# only see on one channel cannot tell you that channel has broken, which is half
-# of what it is for.
-HEARTBEAT_CHANNELS = STOCK_CHANNELS
+# Routine traffic goes to the chat channels, not email. Two channels is enough to
+# tell you one of them has broken, while the inbox stays reserved for the thing
+# worth acting on: actual stock.
+BREAKAGE_CHANNELS = (discord, telegram)
+HEARTBEAT_CHANNELS = (discord, telegram)
 
 
 def broadcast(message: str, channels=STOCK_CHANNELS) -> None:

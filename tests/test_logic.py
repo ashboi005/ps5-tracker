@@ -225,6 +225,39 @@ check(
     None,
 )
 
+print("croma verdict (buybox lies, delivery block decides):")
+from checkers.croma import read_verdict as croma_verdict
+
+# Verbatim shape of the live page: buybox offers Add to Cart while the delivery
+# block refuses the pincode. The block must win.
+croma_undeliverable = (
+    "<title>SONY PlayStation 5 Slim</title>"
+    "<div>\u20b954,990.00 Buy Now Add to Cart</div>"
+    "<div>Delivery at: Ludhiana, 141001 . Not Available for your pincode</div>"
+)
+r = croma_verdict(croma_undeliverable, "u", "141001", True)
+check("croma: Add to Cart + refusal -> not in stock", r.in_stock, False)
+check("croma: marked verified", r.pincode_verified, True)
+check("croma: pincode recorded on result", r.pincode, "141001")
+
+croma_deliverable = (
+    "<title>PS5</title><div>\u20b954,990.00 Buy Now Add to Cart</div>"
+    "<div>Delivery at: New Delhi, 110001 . Expected delivery by 5 Aug</div>"
+)
+r = croma_verdict(croma_deliverable, "u", "110001", True)
+check("croma: deliverable + buyable -> in stock", r.in_stock, True)
+check("croma: price parsed", r.price, "\u20b954,990")
+check(
+    "croma: priming failed -> unverified so no alert",
+    croma_verdict(croma_deliverable, "u", "110001", False).pincode_verified,
+    False,
+)
+check(
+    "croma: no signals -> error, never a false 'no stock'",
+    croma_verdict("<title>PS5</title><div>nothing</div>", "u", "1", True).ok,
+    False,
+)
+
 print("retry policy:")
 from checkers.http import MAX_ATTEMPTS, RETRY_STATUS, TIMEOUT, retry_delay
 
