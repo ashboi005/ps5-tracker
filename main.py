@@ -232,12 +232,18 @@ def stock_message(result, pincode: str) -> str:
             "stock only."
         )
 
+    # The evidence line is what the verdict was actually based on. With it in
+    # the message you can judge a questionable hit without re-checking the site,
+    # and a stale alert is distinguishable from a wrong one.
+    evidence = f"\nSite said: {result.evidence}" if result.evidence else ""
+
     return (
         f"{header}\n"
         f"Retailer: {result.retailer}\n"
         f"Product: {result.name or 'unknown'}\n"
         f"Price: {result.price or 'unknown'}\n"
         f"{result.url}"
+        f"{evidence}"
         f"{caveat}"
     )
 
@@ -362,10 +368,33 @@ def report(results: list, config: dict, dry_run: bool) -> int:
         )
         return 0
 
+    # Text first, every alert, before any screenshot work. Uploading an image
+    # takes seconds and can fail; the message is what you act on, so nothing is
+    # allowed to get in front of it.
     for result in stock_alerts:
         notifiers.broadcast(
             stock_message(result, result.pincode or pincode_for(config, result.retailer))
         )
+
+    # Screenshots strictly afterwards, as a follow-up. Captured at detection time
+    # while the page was open, so this is only the upload.
+    for result in stock_alerts:
+        if not result.screenshot:
+            log.info("no screenshot captured for %s %s", result.retailer, result.url)
+            continue
+        try:
+            notifiers.broadcast_photo(
+                result.screenshot,
+                caption=(
+                    f"📸 {result.retailer} @ {result.pincode} at the moment stock "
+                    f"was detected — {result.name or result.url}"
+                ),
+            )
+        except Exception:  # noqa: BLE001 - a screenshot is a nice-to-have
+            # Must not abort the pass: state is saved below, and losing that
+            # would re-alert the same stock on every run from here on.
+            log.exception("screenshot upload failed for %s", result.url)
+
     for result in broken_alerts:
         notifiers.broadcast(broken_message(result), channels=notifiers.BREAKAGE_CHANNELS)
 

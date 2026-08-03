@@ -37,6 +37,15 @@ class CheckResult:
     # without shell access to the container.
     debug: str | None = None
 
+    # PNG bytes captured at the moment stock was detected, while the page was
+    # still open — so it costs nothing extra and shows exactly what the checker
+    # saw, not what the site looks like minutes later.
+    screenshot: bytes | None = None
+
+    # The delivery/availability text the verdict was based on. Included in the
+    # alert so a questionable hit can be judged immediately.
+    evidence: str | None = None
+
     @property
     def ok(self) -> bool:
         return self.error is None

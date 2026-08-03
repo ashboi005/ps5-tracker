@@ -30,6 +30,7 @@ from checkers.browser import (
     TIMEOUT_MS,
     BrowserUnavailable,
     Session,
+    capture,
     settle,
 )
 from checkers.common import CheckResult, truncate
@@ -61,6 +62,18 @@ UNDELIVERABLE = (
 # "Delivery details" appears only once a location has actually been applied.
 LOCATION_APPLIED = "delivery details"
 LOCATION_UNSET = "location not set"
+
+# Phrases meaning the delivery verdict itself has resolved. The block renders
+# before its verdict line, so a read that stops at the block sees no refusal and
+# wrongly concludes the item is deliverable — the cause of a false "in stock"
+# alert for Noida 201301 that read "not deliverable" minutes later.
+DELIVERABLE_PHRASES = (
+    "delivery by",
+    "delivery in",
+    "free delivery",
+    "expected delivery",
+    "get it by",
+)
 
 log = logging.getLogger("ps5")
 
@@ -128,10 +141,20 @@ async def _try_prime(page, url: str, pincode: str) -> bool:
     return LOCATION_APPLIED in text and LOCATION_UNSET not in text
 
 
+def delivery_evidence(html: str) -> str | None:
+    """The "Delivery details ..." line, so an alert can be judged on its own."""
+    text = strip_tags(html)
+    marker = text.lower().find(LOCATION_APPLIED)
+    if marker == -1:
+        return None
+    return truncate(text[marker : marker + 160], 160)
+
+
 def read_verdict(html: str, url: str, pincode_applied: bool) -> CheckResult:
     """Turn a pincode-primed Flipkart page into a result."""
     text = strip_tags(html).lower()
     name = truncate(parse_name(html))
+    evidence = delivery_evidence(html)
 
     if any(phrase in text for phrase in UNDELIVERABLE):
         # National stock is irrelevant — it cannot reach this pincode.
@@ -140,8 +163,15 @@ def read_verdict(html: str, url: str, pincode_applied: bool) -> CheckResult:
             url=url,
             in_stock=False,
             name=name,
+            evidence=evidence,
             pincode_verified=pincode_applied,
         )
+
+    # Only claim deliverability when the page actually said so. Without a
+    # resolved verdict this is national stock at best, so it stays unverified and
+    # cannot raise an alert.
+    resolved = any(phrase in text for phrase in DELIVERABLE_PHRASES)
+    verified = pincode_applied and resolved
 
     # No refusal, so decide whether it is buyable at all. The delivery-text
     # heuristics are skipped here: this page already answered that question.
@@ -153,6 +183,7 @@ def read_verdict(html: str, url: str, pincode_applied: bool) -> CheckResult:
             retailer=RETAILER,
             url=url,
             name=name,
+            evidence=evidence,
             error="could not determine stock (no schema.org markup, ambiguous text)",
             debug=signal_report(html),
         )
@@ -163,8 +194,30 @@ def read_verdict(html: str, url: str, pincode_applied: bool) -> CheckResult:
         in_stock=in_stock,
         price=parse_price(html),
         name=name,
-        pincode_verified=pincode_applied,
+        evidence=evidence,
+        pincode_verified=verified,
     )
+
+
+async def await_verdict(page, timeout_ms: int = 20_000) -> str:
+    """Poll until the delivery verdict resolves, then return the HTML.
+
+    Returns whatever it has on timeout; the caller treats a missing verdict as
+    unverified rather than assuming either answer.
+    """
+    waited = 0
+    step = 1000
+    html = await page.content()
+    while waited < timeout_ms:
+        text = strip_tags(html).lower()
+        if any(p in text for p in UNDELIVERABLE) or any(
+            p in text for p in DELIVERABLE_PHRASES
+        ):
+            return html
+        await page.wait_for_timeout(step)
+        waited += step
+        html = await page.content()
+    return html
 
 
 async def check(
@@ -204,7 +257,18 @@ async def check(
 
             await page.goto(url, wait_until="domcontentloaded")
             await settle(page, WAIT_FOR, "networkidle")
-            html = await page.content()
+            html = await await_verdict(page)
+
+            blocked = detect_block(html)
+            result = (
+                CheckResult(
+                    retailer=RETAILER, url=url, error=blocked, debug=signal_report(html)
+                )
+                if blocked
+                else read_verdict(html, url, applied)
+            )
+            if result.in_stock:
+                result.screenshot = await capture(page)
         finally:
             with contextlib.suppress(Exception):
                 await page.close()
@@ -215,10 +279,4 @@ async def check(
             retailer=RETAILER, url=url, error=f"{type(exc).__name__}: {exc}"
         )
 
-    blocked = detect_block(html)
-    if blocked:
-        return CheckResult(
-            retailer=RETAILER, url=url, error=blocked, debug=signal_report(html)
-        )
-
-    return read_verdict(html, url, applied)
+    return result

@@ -258,6 +258,28 @@ check(
     False,
 )
 
+print("flipkart verdict must resolve before claiming deliverable:")
+from checkers.flipkart import read_verdict as fk_verdict
+
+# The Noida 201301 false alert: the delivery block had rendered but its verdict
+# line had not, so no refusal was visible and the item looked deliverable.
+fk_base = (
+    "<title>PS5</title><div>Buy now</div>"
+    '<script>{"availability":"https://schema.org/InStock"}</script>'
+)
+check(
+    "block without verdict -> unverified, cannot alert",
+    fk_verdict(fk_base + "<div>Delivery details Noida, UP</div>", "u", True).pincode_verified,
+    False,
+)
+r = fk_verdict(fk_base + "<div>Delivery details Noida, UP Delivery by 7 Aug</div>", "u", True)
+check("resolved deliverable -> verified and in stock", (r.in_stock, r.pincode_verified), (True, True))
+r = fk_verdict(
+    fk_base + "<div>Delivery details Noida Not deliverable at your location</div>", "u", True
+)
+check("refusal -> not in stock, verified", (r.in_stock, r.pincode_verified), (False, True))
+check("evidence captured for the alert", "Delivery details" in (r.evidence or ""), True)
+
 print("retry policy:")
 from checkers.http import MAX_ATTEMPTS, RETRY_STATUS, TIMEOUT, retry_delay
 

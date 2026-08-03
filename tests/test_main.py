@@ -308,6 +308,61 @@ main.report(
 )
 check("a later verified check still alerts for the same URL", len(sent), 1)
 
+# Alert text must go out before any screenshot upload, and a failing upload
+# must not affect the alert.
+order = []
+orig_photo = notifiers_mod.broadcast_photo
+
+
+def fake_broadcast_ordered(message, channels=notifiers_mod.STOCK_CHANNELS):
+    order.append(("text", message[:20]))
+    sent.append((message, channels))
+
+
+def fake_photo(image, caption="", channels=None):
+    order.append(("photo", len(image)))
+
+
+notifiers_mod.broadcast = fake_broadcast_ordered
+notifiers_mod.broadcast_photo = fake_photo
+
+shot = CheckResult(
+    "croma", "https://s", pincode="201301", in_stock=True, name="PS5",
+    pincode_verified=True, screenshot=b"PNGDATA", evidence="Delivery at: Noida, 201301",
+)
+order.clear(); sent.clear()
+state_module.save({}, state_path)
+main.report([shot], cfg_hb, False)
+check("text is sent before the screenshot", [k for k, _ in order], ["text", "photo"])
+check("screenshot bytes forwarded", order[1][1], 7)
+check("evidence line included in the alert", "Delivery at: Noida, 201301" in sent[0][0], True)
+
+# A screenshot upload that explodes must not break the run or the alert.
+def exploding_photo(image, caption="", channels=None):
+    raise RuntimeError("upload failed")
+
+
+notifiers_mod.broadcast_photo = exploding_photo
+order.clear(); sent.clear()
+state_module.save({}, state_path)
+try:
+    main.report([shot], cfg_hb, False)
+    check("failing screenshot upload still leaves the alert sent", len(sent), 1)
+except Exception as exc:
+    check(f"failing screenshot upload must not raise ({exc})", False, True)
+
+notifiers_mod.broadcast_photo = orig_photo
+notifiers_mod.broadcast = fake_broadcast
+
+# No screenshot (e.g. capture failed) must still alert.
+noshot = CheckResult(
+    "croma", "https://n", pincode="201301", in_stock=True, name="PS5",
+    pincode_verified=True,
+)
+sent.clear(); state_module.save({}, state_path)
+main.report([noshot], cfg_hb, False)
+check("missing screenshot still alerts", len(sent), 1)
+
 # Heartbeat surfaces unreadable checks rather than calling them sold out.
 err = CheckResult("croma", "https://z", error="timeout")
 msgs, _ = run([no_stock, err], stale)

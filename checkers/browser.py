@@ -170,6 +170,18 @@ async def session():
             await active.close()
 
 
+async def capture(page) -> bytes | None:
+    """Screenshot the open page. Viewport only — a full-page shot of these
+    product pages runs to megabytes and chat uploads are size-capped.
+
+    Returns None on failure: a missing screenshot must never cost you the alert.
+    """
+    try:
+        return await page.screenshot(full_page=False, type="png")
+    except Exception:  # noqa: BLE001 - the alert matters more than the image
+        return None
+
+
 async def settle(page, wait_for: str | None, wait_until: str) -> None:
     """Best-effort waits after navigation. Never fatal — see Session.render."""
     if wait_until == "networkidle":

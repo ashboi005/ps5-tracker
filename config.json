@@ -2,12 +2,14 @@
   "pincode_overrides": {},
   "retailers": {
     "amazon": [
-      "https://amzn.in/d/06nZ16cx"
+      "https://amzn.in/d/06nZ16cx",
+      "https://amzn.in/d/0eVsQ0Cz"
     ],
     "flipkart": [
       "https://dl.flipkart.com/s/6PceRuNNNN",
       "https://dl.flipkart.com/s/6PXZh8NNNN",
-      "https://dl.flipkart.com/s/6PXN0nNNNN"
+      "https://dl.flipkart.com/s/6PXN0nNNNN",
+      "https://dl.flipkart.com/s/dDd!oPuuuN"
     ],
     "sonycenter": [
       "https://shopatsc.com/collections/playstation-5-console/products/ps5-standard-e-chassis-arv"
@@ -30,6 +32,6 @@
     "144001",
     "110001",
     "122001",
-    "201301"
-  ]
-}
+    "201301",
+    "462042"
+]}

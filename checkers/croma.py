@@ -29,7 +29,14 @@ from __future__ import annotations
 import contextlib
 import logging
 
-from checkers.browser import SETTLE_MS, TIMEOUT_MS, BrowserUnavailable, Session, settle
+from checkers.browser import (
+    SETTLE_MS,
+    TIMEOUT_MS,
+    BrowserUnavailable,
+    Session,
+    capture,
+    settle,
+)
 from checkers.common import CheckResult, truncate
 from checkers.http import detect_block, parse_name, parse_price, signal_report, strip_tags
 
@@ -87,11 +94,26 @@ async def prime_pincode(page, url: str, pincode: str) -> bool:
     return pincode in await page.content()
 
 
+def delivery_evidence(html: str) -> str | None:
+    """The "Delivery at: ..." line, so an alert can be judged on its own."""
+    text = strip_tags(html)
+    marker = text.lower().find(DELIVERY_MARKER)
+    if marker == -1:
+        return None
+    return truncate(text[marker : marker + 140], 140)
+
+
 def read_verdict(html: str, url: str, pincode: str, applied: bool) -> CheckResult:
     """Turn a pincode-primed Croma page into a result."""
     text = strip_tags(html).lower()
     name = truncate(parse_name(html))
-    common = {"retailer": RETAILER, "url": url, "pincode": pincode, "name": name}
+    common = {
+        "retailer": RETAILER,
+        "url": url,
+        "pincode": pincode,
+        "name": name,
+        "evidence": delivery_evidence(html),
+    }
 
     if UNDELIVERABLE in text:
         # Buybox may still say "Add to Cart" — this block overrides it.
@@ -185,6 +207,22 @@ async def check(
             with contextlib.suppress(Exception):
                 await page.wait_for_selector(DELIVERY_BLOCK, timeout=SETTLE_MS * 2)
             html = await await_verdict(page)
+
+            blocked = detect_block(html)
+            result = (
+                CheckResult(
+                    retailer=RETAILER,
+                    url=url,
+                    pincode=pincode,
+                    error=blocked,
+                    debug=signal_report(html),
+                )
+                if blocked
+                else read_verdict(html, url, pincode, applied)
+            )
+            # Capture only on a hit, while the page is still open.
+            if result.in_stock:
+                result.screenshot = await capture(page)
         finally:
             with contextlib.suppress(Exception):
                 await page.close()
@@ -198,14 +236,4 @@ async def check(
             error=f"{type(exc).__name__}: {exc}",
         )
 
-    blocked = detect_block(html)
-    if blocked:
-        return CheckResult(
-            retailer=RETAILER,
-            url=url,
-            pincode=pincode,
-            error=blocked,
-            debug=signal_report(html),
-        )
-
-    return read_verdict(html, url, pincode, applied)
+    return result

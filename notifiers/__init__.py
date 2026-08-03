@@ -31,3 +31,23 @@ def broadcast(message: str, channels=STOCK_CHANNELS) -> None:
             log.info("notified via %s", name)
         except Exception as exc:  # noqa: BLE001 - a dead channel must not stop others
             log.error("%s notification failed: %s", name, exc)
+
+
+# Screenshots go to the chat channels only — they are for glancing at on a phone,
+# and email attachments add nothing when the link is already in the message.
+PHOTO_CHANNELS = (discord, telegram)
+
+
+def broadcast_photo(image: bytes, caption: str = "", channels=PHOTO_CHANNELS) -> None:
+    """Send a screenshot. Always called AFTER the text alert has gone out, so a
+    slow or failing upload can never delay the thing you act on."""
+    for channel in channels:
+        name = channel.__name__.rsplit(".", 1)[-1]
+        sender = getattr(channel, "send_photo", None)
+        if sender is None or not channel.configured():
+            continue
+        try:
+            sender(image, caption)
+            log.info("screenshot sent via %s", name)
+        except Exception as exc:  # noqa: BLE001 - never let this affect the alert
+            log.error("%s screenshot failed: %s", name, exc)

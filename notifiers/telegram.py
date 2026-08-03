@@ -68,3 +68,29 @@ def send(message: str) -> None:
     raise RuntimeError(
         f"Telegram API {response.status_code}: {description}{hint}"
     )
+
+
+def send_photo(image: bytes, caption: str = "", filename: str = "stock.png") -> None:
+    """Send a screenshot as a follow-up to the text alert."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not (token and chat_id):
+        raise RuntimeError("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set")
+
+    try:
+        response = httpx.post(
+            f"https://api.telegram.org/bot{token}/sendPhoto",
+            data={"chat_id": chat_id, "caption": caption[:1000]},
+            files={"photo": (filename, image, "image/png")},
+            timeout=TIMEOUT * 3,
+        )
+    except httpx.HTTPError as exc:
+        raise RuntimeError(redact(str(exc))) from None
+
+    if response.status_code != 200:
+        description = ""
+        try:
+            description = response.json().get("description", "")
+        except ValueError:
+            description = response.text[:200]
+        raise RuntimeError(f"Telegram sendPhoto {response.status_code}: {description}")
